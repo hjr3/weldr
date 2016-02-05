@@ -1,0 +1,24 @@
+[package]
+name = "alacrity"
+version = "0.1.0"
+authors = ["Herman J. Radtke III <herman@hermanradtke.com>"]
+
+[dependencies]
+
+mioco = { git = "https://github.com/dpc/mioco.git" }
+log = "0.3"
+
+env_logger = "0.3.1"
+hyper = "0.7.2"
+
+[[bin]]
+name = "alacrity"
+path = "src/main.rs"
+
+[[bin]]
+name = "test-web-server"
+path = "src/test-web-server.rs"
+
+[[bin]]
+name = "test-client"
+path = "src/test-client.rs"
