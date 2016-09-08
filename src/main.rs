@@ -8,7 +8,13 @@ use std::net::SocketAddr;
 
 use futures::Future;
 use futures::stream::Stream;
-use tokio_core::Loop;
+use tokio_core::{Loop, TcpStream};
+
+struct Pipe {
+    client: TcpStream,
+    server: TcpStream,
+    buf: Vec<u8>,
+}
 
 fn main() {
     env_logger::init().unwrap();
@@ -30,27 +36,39 @@ fn main() {
 
     println!("Listening on: {}", addr);
 
-    let clients = listener.incoming().map(move |(socket, addr)| {
+    let pipe = listener.incoming().map(move |(socket, addr)| {
         println!("Incoming connection on {}", addr);
-        socket
-    });
 
-    let pairs = clients.map(|client| {
         let handle = handle.clone();
         let connected = handle.tcp_connect(&backend);
 
-        connected.and_then(move |server| Ok((client, server)))
+        connected.and_then(move |server| {
+            Ok (
+                Pipe {
+                    client: socket,
+                    server: server,
+                    buf: Vec::new(),
+                }
+            )
+        })
     });
 
-    let server = pairs.for_each(|pair| {
-        println!("Resolving pairs");
-        pin.spawn(pair.and_then(|(mut client, _server)| {
+    //let pipe = pipe.and_then(|mut pipe| {
+    //    let bytes = pipe.client.read_to_end(&mut pipe.buf).expect("Failed to read from client");
+
+    //    println!("Read {} bytes", bytes);
+    //    pipe
+    //});
+
+    let server = pipe.for_each(|pipe| {
+        println!("Connecting pipe");
+        pin.spawn(pipe.and_then(|mut pipe| {
             println!("About to read");
 
-            let mut buf = Vec::new();
-            let bytes = client.read_to_end(&mut buf).expect("Failed to read from client");
+            let bytes = pipe.client.read_to_end(&mut pipe.buf).expect("Failed to read from client");
 
             println!("Read {} bytes", bytes);
+
             futures::finished(())
         }).map_err(|e| { // spawn expects an error type of () and we are passing through io::Error
             println!("Error when reading from client - {}", e);
