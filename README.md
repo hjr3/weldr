@@ -25,7 +25,11 @@ Example HA Proxy config: http://www.haproxy.org/download/1.4/doc/configuration.t
 Licensing this under GPL (not sure version) or a commercial license. Is this compatible with MPL, MIT and Apache licenses?
 
 
+## Running
 
+   * `cargo run --bin test-server`
+   * `cargo run --bin alacrity`
+   * `echo "hi" | nc localhost 8080`
 
 ### Tokio notes
 
