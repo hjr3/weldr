@@ -1,89 +1,64 @@
-#[macro_use]
-extern crate mioco;
 extern crate env_logger;
+extern crate futures;
+extern crate tokio_core;
 
-#[macro_use]
-extern crate log;
-
-use std::str::FromStr;
-use std::io::{self, Read, Write};
+use std::env;
+use std::io::{Read, Write};
 use std::net::SocketAddr;
-use mioco::tcp::TcpListener;
-use mioco::tcp::TcpStream;
 
-#[derive(Clone)]
-struct Backend {
-    servers: Vec<SocketAddr>
-}
-
-impl Backend {
-    fn forward(&self, send_buf: &[u8], recv_buf: &mut [u8]) -> io::Result<usize> {
-        let server = self.servers.first().unwrap();
-
-        trace!("Connecting to backend server on {}", server);
-        let mut stream = TcpStream::connect(server).unwrap();
-
-        trace!("Writing {} bytes to backend server", send_buf.len());
-        let bytes_sent = try!(stream.write(send_buf));
-        trace!("Wrote {} bytes to backend server", bytes_sent);
-
-        let size = try!(stream.read(recv_buf));
-        trace!("Read {} bytes from backend server", size);
-
-        Ok(size)
-    }
-}
+use futures::Future;
+use futures::stream::Stream;
+use tokio_core::Loop;
 
 fn main() {
     env_logger::init().unwrap();
 
-    let addr = FromStr::from_str("127.0.0.1:5555").unwrap();
-    let listener = TcpListener::bind(&addr).unwrap();
+    let addr = env::args().nth(1).unwrap_or("127.0.0.1:8080".to_string());
+    let addr = addr.parse::<SocketAddr>().unwrap();
 
-    mioco::start(move ||{
+    let backend = env::args().nth(2).unwrap_or("127.0.0.1:12345".to_string());
+    let backend = backend.parse::<SocketAddr>().unwrap();
 
-        info!("Starting alacrity server on {}", addr);
+    // Create the event loop that will drive this server
+    let mut lp = Loop::new().unwrap();
+    let handle = lp.handle();
 
-        for _ in 0..mioco::thread_num() {
-            let listener = try!(listener.try_clone());
-            mioco::spawn(move || {
+    // Create a TCP listener which will listen for incoming connections
+    let listener = lp.run(handle.clone().tcp_listen(&addr)).unwrap();
 
-                loop {
-                    let mut conn = try!(listener.accept());
-                    trace!("Accepted conncection");
+    let pin = lp.pin();
 
-                    mioco::spawn(move || {
-                        let mut buf = [0u8; 1024 * 16];
-                        loop {
-                            let size = try!(conn.read(&mut buf));
-                            trace!("Read {} bytes from socket", size);
-                            if size == 0 {/* eof */ break; }
+    println!("Listening on: {}", addr);
 
-                            let mut conn = try!(conn.try_clone());
+    let clients = listener.incoming().map(move |(socket, addr)| {
+        println!("Incoming connection on {}", addr);
+        socket
+    });
 
-                            mioco::spawn(move || {
-                                let mut recv_buf = [0u8; 1024 * 16];
-                                let servers = vec!(FromStr::from_str("127.0.0.1:8000").unwrap());
-                                let backend = Backend { servers: servers };
-                                let recv_size = match backend.forward(&buf[0..size], &mut recv_buf) {
-                                    Ok(size) => size,
-                                    Err(e) => {
-                                        error!("Failed to foward to backend: {:?}", e);
-                                        return Ok(());
-                                    },
-                                };
-                                try!(conn.write_all(&mut recv_buf[0..recv_size]));
+    let pairs = clients.map(|client| {
+        let handle = handle.clone();
+        let connected = handle.tcp_connect(&backend);
 
-                                Ok(())
-                            });
-                        }
+        connected.and_then(move |server| Ok((client, server)))
+    });
 
-                        Ok(())
-                    });
-                }
-            })
-        }
+    let server = pairs.for_each(|pair| {
+        println!("Resolving pairs");
+        pin.spawn(pair.and_then(|(mut client, _server)| {
+            println!("About to read");
+
+            let mut buf = Vec::new();
+            let bytes = client.read_to_end(&mut buf).expect("Failed to read from client");
+
+            println!("Read {} bytes", bytes);
+            futures::finished(())
+        }).map_err(|e| { // spawn expects an error type of () and we are passing through io::Error
+            println!("Error when reading from client - {}", e);
+            ()
+        }));
 
         Ok(())
     });
+
+    lp.run(server).unwrap();
 }

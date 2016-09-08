@@ -5,20 +5,15 @@ authors = ["Herman J. Radtke III <herman@hermanradtke.com>"]
 
 [dependencies]
 
-mioco = { git = "https://github.com/dpc/mioco.git" }
 log = "0.3"
-
 env_logger = "0.3.1"
-hyper = "0.7.2"
+futures = { git = "https://github.com/alexcrichton/futures-rs" }
+tokio-core = { git = "https://github.com/tokio-rs/tokio-core" }
 
 [[bin]]
 name = "alacrity"
 path = "src/main.rs"
 
 [[bin]]
-name = "test-web-server"
-path = "src/test-web-server.rs"
-
-[[bin]]
-name = "test-client"
-path = "src/test-client.rs"
+name = "test-server"
+path = "src/test-server.rs"
