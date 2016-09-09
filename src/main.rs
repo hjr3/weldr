@@ -1,3 +1,4 @@
+#[macro_use] extern crate log;
 extern crate env_logger;
 extern crate futures;
 extern crate tokio_core;
@@ -8,7 +9,8 @@ use std::net::SocketAddr;
 
 use futures::Future;
 use futures::stream::Stream;
-use tokio_core::{Loop, TcpStream};
+use tokio_core::reactor::Core;
+use tokio_core::net::{TcpListener, TcpStream};
 
 struct Pipe {
     client: TcpStream,
@@ -26,21 +28,22 @@ fn main() {
     let backend = backend.parse::<SocketAddr>().unwrap();
 
     // Create the event loop that will drive this server
-    let mut lp = Loop::new().unwrap();
+    let mut lp = Core::new().unwrap();
     let handle = lp.handle();
+    let h2 = handle.clone();
+
+    let s = TcpListener::bind(&addr, &handle.clone());
 
     // Create a TCP listener which will listen for incoming connections
-    let listener = lp.run(handle.clone().tcp_listen(&addr)).unwrap();
+    let listener = lp.run(futures::done(s)).unwrap();
 
-    let pin = lp.pin();
-
-    println!("Listening on: {}", addr);
+    info!("Listening on: {}", addr);
 
     let pipe = listener.incoming().map(move |(socket, addr)| {
-        println!("Incoming connection on {}", addr);
+        debug!("Incoming connection on {}", addr);
 
-        let handle = handle.clone();
-        let connected = handle.tcp_connect(&backend);
+        // FIXME move this into the spawn so it is not blocking the main thread?
+        let connected = TcpStream::connect(&backend, &h2);
 
         connected.and_then(move |server| {
             Ok (
@@ -50,30 +53,42 @@ fn main() {
                     buf: Vec::new(),
                 }
             )
-        })
+        }).boxed()
     });
 
-    //let pipe = pipe.and_then(|mut pipe| {
-    //    let bytes = pipe.client.read_to_end(&mut pipe.buf).expect("Failed to read from client");
-
-    //    println!("Read {} bytes", bytes);
-    //    pipe
-    //});
+    // Ideal: read(client, ...).and_then(write_all(server, ...).and_then(read(server, ...).and_then(write_all(client, ...)
 
     let server = pipe.for_each(|pipe| {
-        println!("Connecting pipe");
-        pin.spawn(pipe.and_then(|mut pipe| {
-            println!("About to read");
+        trace!("Connecting pipe");
 
+        let done = pipe.and_then(|mut pipe| {
             let bytes = pipe.client.read_to_end(&mut pipe.buf).expect("Failed to read from client");
+            debug!("Read {} bytes from client {}", bytes, &pipe.client.peer_addr().unwrap());
 
-            println!("Read {} bytes", bytes);
+            futures::done(Ok(pipe))
+        }).and_then(|mut pipe| {
+            pipe.server.write_all(&pipe.buf).expect("Failed to write to server");
+            debug!("Wrote {} bytes to server {}", &pipe.buf.len(), &pipe.server.peer_addr().unwrap());
+
+            futures::done(Ok(pipe))
+        }).and_then(|mut pipe| {
+            pipe.buf.clear();
+
+            let bytes = pipe.server.read_to_end(&mut pipe.buf).expect("Failed to read from server");
+            println!("Read {} bytes from server {}", bytes, &pipe.server.peer_addr().unwrap());
+
+            futures::done(Ok(pipe))
+        }).and_then(|mut pipe| {
+            pipe.client.write_all(&pipe.buf).expect("Failed to write to client");
+            debug!("Wrote {} bytes to client {}", &pipe.buf.len(), &pipe.client.peer_addr().unwrap());
 
             futures::finished(())
         }).map_err(|e| { // spawn expects an error type of () and we are passing through io::Error
-            println!("Error when reading from client - {}", e);
+            error!("Error trying proxy - {}", e);
             ()
-        }));
+        });
+
+        handle.spawn(done);
 
         Ok(())
     });
