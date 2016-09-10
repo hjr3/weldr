@@ -1,21 +1,102 @@
 #[macro_use] extern crate log;
 extern crate env_logger;
-extern crate futures;
-extern crate tokio_core;
+#[macro_use] extern crate futures;
+#[macro_use] extern crate tokio_core;
 
 use std::env;
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
 use std::net::SocketAddr;
 
-use futures::Future;
+use futures::{Future, Poll};
 use futures::stream::Stream;
 use tokio_core::reactor::Core;
 use tokio_core::net::{TcpListener, TcpStream};
 
+#[derive(Debug)]
+enum ConnectionState {
+    ClientReading,
+    ClientWriting,
+    ServerReading,
+    ServerWriting,
+}
+
+#[must_use = "must use pipe"]
 struct Pipe {
+    client_addr: SocketAddr,
+    server_addr: SocketAddr,
     client: TcpStream,
     server: TcpStream,
-    buf: Vec<u8>,
+    state: ConnectionState,
+
+    /// The buffer from the client to send to the server
+    send_buf: Vec<u8>,
+
+    /// The buffer from the server to send to the client
+    recv_buf: Vec<u8>,
+}
+
+impl Future for Pipe {
+    type Item = ();
+    type Error = io::Error;
+
+    fn poll(&mut self) -> Poll<(), io::Error> {
+        trace!("Polling...");
+
+        loop {
+
+            match self.state {
+                ConnectionState::ClientReading => {
+                    loop {
+                        trace!("Reading from {}", self.client_addr);
+
+                        // TODO should really be a VecDequeue in case we read more than once
+                        let bytes = try_nb!(self.client.read_to_end(&mut self.send_buf));
+                        trace!("Read {} bytes from {}", bytes, self.client_addr);
+
+                        if bytes == 0 {
+                            self.state = ConnectionState::ServerWriting;
+                            trace!("State switched to {:?}", self.state);
+                            break;
+                        }
+                    }
+                }
+
+                ConnectionState::ServerWriting => {
+                    trace!("Writing to {}", self.server_addr);
+                    try_nb!(self.server.write_all(&mut self.send_buf));
+                    trace!("Wrote {} bytes to {}", self.send_buf.len(), self.server_addr);
+
+                    self.server.shutdown(::std::net::Shutdown::Write).expect("Failed to shutdown writes for server socket");
+                    self.state = ConnectionState::ServerReading;
+                    trace!("State switched to {:?}", self.state);
+                }
+
+                ConnectionState::ServerReading => {
+                    loop {
+                        trace!("Reading from {}", self.server_addr);
+
+                        let bytes = try_nb!(self.server.read_to_end(&mut self.recv_buf));
+                        trace!("Read {} bytes from {}", bytes, self.server_addr);
+
+                        if bytes == 0 {
+                            self.state = ConnectionState::ClientWriting;
+                            trace!("State switched to {:?}", self.state);
+                            break;
+                        }
+                    }
+                }
+
+                ConnectionState::ClientWriting => {
+                    trace!("Writing to {}", self.client_addr);
+                    try_nb!(self.client.write_all(&mut self.recv_buf));
+                    trace!("Wrote {} bytes to {}", self.recv_buf.len(), self.client_addr);
+
+                    self.state = ConnectionState::ClientReading;
+                    trace!("State switched to {:?}", self.state);
+                }
+            }
+        }
+    }
 }
 
 fn main() {
@@ -39,7 +120,7 @@ fn main() {
 
     info!("Listening on: {}", addr);
 
-    let pipe = listener.incoming().map(move |(socket, addr)| {
+    let conn = listener.incoming().map(move |(socket, addr)| {
         debug!("Incoming connection on {}", addr);
 
         // FIXME move this into the spawn so it is not blocking the main thread?
@@ -48,41 +129,28 @@ fn main() {
         connected.and_then(move |server| {
             Ok (
                 Pipe {
+                    client_addr: addr,
+                    server_addr: backend,
                     client: socket,
                     server: server,
-                    buf: Vec::new(),
+                    state: ConnectionState::ClientReading,
+                    send_buf: Vec::new(),
+                    recv_buf: Vec::new(),
                 }
             )
         }).boxed()
     });
 
-    // Ideal: read(client, ...).and_then(write_all(server, ...).and_then(read(server, ...).and_then(write_all(client, ...)
+    let server = conn.for_each(|conn| {
+        trace!("Connecting...");
 
-    let server = pipe.for_each(|pipe| {
-        trace!("Connecting pipe");
+        let done = conn.and_then(|conn| {
+            trace!("Before polling...");
 
-        let done = pipe.and_then(|mut pipe| {
-            let bytes = pipe.client.read_to_end(&mut pipe.buf).expect("Failed to read from client");
-            debug!("Read {} bytes from client {}", bytes, &pipe.client.peer_addr().unwrap());
-
-            futures::done(Ok(pipe))
-        }).and_then(|mut pipe| {
-            pipe.server.write_all(&pipe.buf).expect("Failed to write to server");
-            debug!("Wrote {} bytes to server {}", &pipe.buf.len(), &pipe.server.peer_addr().unwrap());
-
-            futures::done(Ok(pipe))
-        }).and_then(|mut pipe| {
-            pipe.buf.clear();
-
-            let bytes = pipe.server.read_to_end(&mut pipe.buf).expect("Failed to read from server");
-            println!("Read {} bytes from server {}", bytes, &pipe.server.peer_addr().unwrap());
-
-            futures::done(Ok(pipe))
-        }).and_then(|mut pipe| {
-            pipe.client.write_all(&pipe.buf).expect("Failed to write to client");
-            debug!("Wrote {} bytes to client {}", &pipe.buf.len(), &pipe.client.peer_addr().unwrap());
-
-            futures::finished(())
+            conn.and_then(|_| {
+                debug!("Done.");
+                futures::finished(())
+            })
         }).map_err(|e| { // spawn expects an error type of () and we are passing through io::Error
             error!("Error trying proxy - {}", e);
             ()
