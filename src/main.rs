@@ -20,7 +20,7 @@ enum ConnectionState {
     ServerWriting,
 }
 
-#[must_use = "must use pipe"]
+#[must_use = "Must use Pipe"]
 struct Pipe {
     client_addr: SocketAddr,
     server_addr: SocketAddr,
@@ -120,46 +120,35 @@ fn main() {
 
     info!("Listening on: {}", addr);
 
-    let conn = listener.incoming().map(move |(socket, addr)| {
+    let proxy = listener.incoming().for_each(|(sock, addr)| {
         debug!("Incoming connection on {}", addr);
 
-        // FIXME move this into the spawn so it is not blocking the main thread?
-        let connected = TcpStream::connect(&backend, &h2);
+        // TODO turn this into a pool managed by raft
+        let pipe = TcpStream::connect(&backend, &h2).and_then(move |server| {
 
-        connected.and_then(move |server| {
-            Ok (
-                Pipe {
-                    client_addr: addr,
-                    server_addr: backend,
-                    client: socket,
-                    server: server,
-                    state: ConnectionState::ClientReading,
-                    send_buf: Vec::new(),
-                    recv_buf: Vec::new(),
-                }
-            )
-        }).boxed()
-    });
-
-    let server = conn.for_each(|conn| {
-        trace!("Connecting...");
-
-        let done = conn.and_then(|conn| {
-            trace!("Before polling...");
-
-            conn.and_then(|_| {
-                debug!("Done.");
-                futures::finished(())
+            Box::new(Pipe {
+                client_addr: addr,
+                server_addr: backend,
+                client: sock,
+                server: server,
+                state: ConnectionState::ClientReading,
+                send_buf: Vec::new(),
+                recv_buf: Vec::new(),
             })
-        }).map_err(|e| { // spawn expects an error type of () and we are passing through io::Error
+
+        }).and_then(|_| {
+            debug!("Finished proxying");
+            futures::finished(())
+        }).map_err(|e| {
             error!("Error trying proxy - {}", e);
             ()
         });
 
-        handle.spawn(done);
+        // spawn expects Item=Async(()), Error=()
+        handle.spawn(pipe);
 
         Ok(())
     });
 
-    lp.run(server).unwrap();
+    lp.run(proxy).unwrap();
 }
