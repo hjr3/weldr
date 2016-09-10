@@ -1,48 +1,95 @@
 # Alacrity
 
-A tcp load balancer written in Rust.
+A tcp proxy written in Rust.
 
 ## Design
 
-Alacrity uses coroutines to take advantage of async-IO and threads to maximize throughput.
+The goal is to build a proxy that works well in the dynamic VM/container environments that are starting to be more common.
 
-HAProxy is really big on making the stats easy. It does this using a webpage though. I wonder if I should consider adding a simple API for things like stats and high level monitoring.
+   * Servers must register with the proxy using an HTTP POST to the management IP.
+      * The POST payload contains the health check information.
+   * The proxy will keep that server active in the pool as long as the health succeeds.
+   * The pool is managed by Raft, allowing a cluster of redundant proxy servers. This should allow an active/passive setup out of the box.
+      * Note: The [raft-rs](https://github.com/Hoverbear/raft-rs) crate does not currently support dynamic membership.
+   * Async IO is done using tokio-core (which is built on top of mio).
 
-### Clustering
+Credit to Hoverbear who talked through some of the design with me.
 
-For clustiner, Alacrity must be setup using DNS round-robin.
-
-### High Availability
-
-Alacrity has an active/passive setup that works out of the box.
-
-## HA Proxy
-
-Example HA Proxy config: http://www.haproxy.org/download/1.4/doc/configuration.txt
-
-## License
-
-Licensing this under GPL (not sure version) or a commercial license. Is this compatible with MPL, MIT and Apache licenses?
-
-
-## Running
+## Running Protype
 
    * `cargo run --bin test-server`
    * `cargo run --bin alacrity`
    * `echo "hi" | nc localhost 8080`
 
-### Tokio notes
+## High Level Roadmap
 
-[13:40:24]  <moosnat>	Service is explained pretty well in the medium post -- basically a composable middleware
-[13:40:31]  <moosnat>	I don't really understand the others though
-[14:16:35]  <tikue>	moosnat: transport basically encodes how to read and write messages 
-[14:16:56]  <tikue>	moosnat: readiness is how the transport tells the event loop that read or write should be invoked on any given tick
-[14:17:33]  <tikue>	so service = application layer, transport = the application's underlying protocol, whether that is http or some other custom protocol
-[14:17:55]  <moosnat>	tikue: so I'd write the communication logic in the transport
-[14:18:02]  <tikue>	moosnat: the nice thing is that, if you're using a common transport like http, you don't have to write it yourself, and you just have to concern yourself with the Service layer
-[14:18:04]  <moosnat>	the high-level application in service
+   * [x] Proxy prototype using tokio-core
+   * [ ] Create Server pool
+   * [ ] Management API
+   * [ ] Support health checks
+   * [ ] Server pool managed by raft
 
-[16:43:14]  <~carllerche>	tikue: moosnat: you can stack transports. Pipeline is actually not a transport
-[16:43:32]  <~carllerche>	Pipeline is the task implementation. It takes a transport and exposes it as a service.
-[16:43:59]  <~carllerche>	Pipeline is a reusable glue layer between transport and service
-[16:44:07]  <~carllerche>	For pipeline based protocols
+## Management API Design
+
+### Adding A Server
+
+```
+POST /servers
+
+{
+   "ip": "120.0.0.1",
+   "port": "8080",
+   "check": {
+      "type": "tcp"
+   }
+}
+```
+
+### Removing A Server
+
+Note: It is more common for a server to fall out of the pool after `n` health checks fail.
+
+```
+DELETE /servers/:id
+```
+
+### Stats
+
+```
+GET /stats
+```
+
+```
+{
+   "client": {
+      "success": 34534,
+      "failed": 33,
+   },
+   "server": {
+      "success": 33770,
+      "failed": 15,
+   }
+}
+```
+
+#### Detailed Stats
+
+```
+GET /stats/detail
+```
+
+```
+[{
+   "id": "...",
+   "ip": "127.0.0.1",
+   "port": "8080",
+   "success": 33770,
+   "failed": 15,
+},{
+   ...
+}]
+```
+
+## License
+
+Dunno yet!
