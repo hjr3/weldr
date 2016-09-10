@@ -3,6 +3,9 @@ extern crate env_logger;
 #[macro_use] extern crate futures;
 #[macro_use] extern crate tokio_core;
 
+// pub mod for now until the entire API is used internally
+pub mod pool;
+
 use std::env;
 use std::io::{self, Read, Write};
 use std::net::SocketAddr;
@@ -11,6 +14,8 @@ use futures::{Future, Poll};
 use futures::stream::Stream;
 use tokio_core::reactor::Core;
 use tokio_core::net::{TcpListener, TcpStream};
+use pool::Pool;
+
 
 #[derive(Debug)]
 enum ConnectionState {
@@ -106,7 +111,7 @@ fn main() {
     let addr = addr.parse::<SocketAddr>().unwrap();
 
     let backend = env::args().nth(2).unwrap_or("127.0.0.1:12345".to_string());
-    let backend = backend.parse::<SocketAddr>().unwrap();
+    let mut pool = Pool::new(vec![backend]).unwrap();
 
     // Create the event loop that will drive this server
     let mut lp = Core::new().unwrap();
@@ -122,6 +127,8 @@ fn main() {
 
     let proxy = listener.incoming().for_each(|(sock, addr)| {
         debug!("Incoming connection on {}", addr);
+
+        let backend = pool.get().unwrap();
 
         // TODO turn this into a pool managed by raft
         let pipe = TcpStream::connect(&backend, &h2).and_then(move |server| {
