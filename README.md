@@ -24,7 +24,7 @@ Credit to Hoverbear who talked through some of the design with me.
 ## High Level Roadmap
 
    * [x] Proxy prototype using tokio-core
-   * [ ] Create Server pool
+   * [x] Create Server pool
    * [ ] Management API
    * [ ] Support health checks
    * [ ] Server pool managed by raft
