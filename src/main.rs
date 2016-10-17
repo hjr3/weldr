@@ -2,6 +2,7 @@
 extern crate env_logger;
 #[macro_use] extern crate futures;
 #[macro_use] extern crate tokio_core;
+extern crate tokio_timer;
 
 // pub mod for now until the entire API is used internally
 pub mod pool;
@@ -51,7 +52,7 @@ fn main() {
 
         // create a timeout future and map it to Err
         // this gives us future that will map to std::result::Result<_, Timeout>
-        let connect_timer = futures::finished(timeout).map(Err);
+        let connect_timer = timeout.map(Err);
 
         // TODO turn this into a pool managed by raft
         let backend = pool.get().unwrap();
