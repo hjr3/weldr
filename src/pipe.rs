@@ -1,8 +1,9 @@
-use std::io::{self, Read, Write};
+use std::io;
 use std::net::SocketAddr;
 
 use futures::{Future, Poll};
 use tokio_core::net::TcpStream;
+use tokio_proto::{TryRead, TryWrite};
 
 #[derive(Debug)]
 enum ConnectionState {
@@ -21,10 +22,10 @@ pub struct Pipe {
     state: ConnectionState,
 
     /// The buffer from the client to send to the server
-    send_buf: Vec<u8>,
+    send_buf: [u8; 1024],
 
     /// The buffer from the server to send to the client
-    recv_buf: Vec<u8>,
+    recv_buf: [u8; 1024],
 }
 
 impl Pipe {
@@ -35,8 +36,8 @@ impl Pipe {
             client: client,
             server: server,
             state: ConnectionState::ClientReading,
-            send_buf: Vec::new(),
-            recv_buf: Vec::new(),
+            send_buf: [0; 1024],
+            recv_buf: [0; 1024],
         }
     }
 }
@@ -55,8 +56,7 @@ impl Future for Pipe {
                     loop {
                         trace!("Reading from {}", self.client_addr);
 
-                        // TODO should really be a VecDequeue in case we read more than once
-                        let bytes = try_nb!(self.client.read_to_end(&mut self.send_buf));
+                        let bytes = try_ready!(self.client.try_read(&mut self.send_buf));
                         trace!("Read {} bytes from {}", bytes, self.client_addr);
 
                         if bytes == 0 {
@@ -69,7 +69,7 @@ impl Future for Pipe {
 
                 ConnectionState::ServerWriting => {
                     trace!("Writing to {}", self.server_addr);
-                    try_nb!(self.server.write_all(&mut self.send_buf));
+                    try_ready!(self.server.try_write(&mut self.send_buf));
                     trace!("Wrote {} bytes to {}", self.send_buf.len(), self.server_addr);
 
                     self.server.shutdown(::std::net::Shutdown::Write).expect("Failed to shutdown writes for server socket");
@@ -81,7 +81,7 @@ impl Future for Pipe {
                     loop {
                         trace!("Reading from {}", self.server_addr);
 
-                        let bytes = try_nb!(self.server.read_to_end(&mut self.recv_buf));
+                        let bytes = try_ready!(self.server.try_read(&mut self.recv_buf));
                         trace!("Read {} bytes from {}", bytes, self.server_addr);
 
                         if bytes == 0 {
@@ -94,7 +94,7 @@ impl Future for Pipe {
 
                 ConnectionState::ClientWriting => {
                     trace!("Writing to {}", self.client_addr);
-                    try_nb!(self.client.write_all(&mut self.recv_buf));
+                    try_ready!(self.client.try_write(&mut self.recv_buf));
                     trace!("Wrote {} bytes to {}", self.recv_buf.len(), self.client_addr);
 
                     self.state = ConnectionState::ClientReading;
