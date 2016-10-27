@@ -9,6 +9,7 @@ log = "0.3"
 env_logger = "0.3.1"
 futures = "0.1.1"
 tokio-core = "0.1.0"
+tokio-proto = { git = "https://github.com/tokio-rs/tokio-proto" }
 tokio-timer = { git = "https://github.com/tokio-rs/tokio-timer" }
 
 [[bin]]
