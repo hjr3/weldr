@@ -4,6 +4,7 @@ use std::net::SocketAddr;
 use futures::{Future, Poll, Async};
 use tokio_core::net::TcpStream;
 use tokio_proto::{TryRead, TryWrite};
+use bytes::buf::RingBuf;
 
 #[derive(Debug)]
 enum ConnectionState {
@@ -22,8 +23,7 @@ pub struct Pipe {
     state: ConnectionState,
 
     /// A buffer to keep track of the data betewen the client and server
-    buf: [u8; 1024],
-    num_bytes: usize,
+    buf: RingBuf,
 }
 
 impl Pipe {
@@ -34,8 +34,7 @@ impl Pipe {
             client: client,
             server: server,
             state: ConnectionState::ClientReading,
-            buf: [0u8; 1024],
-            num_bytes: 0,
+            buf: RingBuf::with_capacity(1024),
         }
     }
 }
@@ -53,60 +52,50 @@ impl Future for Pipe {
                 ConnectionState::ClientReading => {
                     trace!("Reading from {}", self.client_addr);
 
-                    let bytes = try_ready!(self.client.try_read(&mut self.buf));
+                    let bytes = try_ready!(self.client.try_read_buf(&mut self.buf));
                     trace!("Read {} bytes from {}", bytes, self.client_addr);
 
                     if bytes == 0 {
                         self.state = ConnectionState::ServerWriting;
                         trace!("State switched to {:?}", self.state);
-                    } else {
-                        self.num_bytes = bytes;
                     }
                 }
 
                 ConnectionState::ServerWriting => {
                     trace!("Writing to {}", self.server_addr);
 
-                    let bytes = try_ready!(self.server.try_write(&mut self.buf[0..self.num_bytes]));
+                    let bytes = try_ready!(self.server.try_write_buf(&mut self.buf));
                     trace!("Wrote {} bytes to {}", bytes, self.server_addr);
 
                     if bytes == 0 {
-                        self.num_bytes = 0;
                         self.state = ConnectionState::ServerReading;
                         trace!("State switched to {:?}", self.state);
-                    } else {
-                        self.num_bytes -= bytes;
                     }
                 }
 
                 ConnectionState::ServerReading => {
                     trace!("Reading from {}", self.server_addr);
 
-                    let bytes = try_ready!(self.server.try_read(&mut self.buf));
+                    let bytes = try_ready!(self.server.try_read_buf(&mut self.buf));
                     trace!("Read {} bytes from {}", bytes, self.server_addr);
 
                     if bytes == 0 {
                         self.state = ConnectionState::ClientWriting;
                         trace!("State switched to {:?}", self.state);
-                    } else {
-                        self.num_bytes = bytes;
                     }
                 }
 
                 ConnectionState::ClientWriting => {
                     trace!("Writing to {}", self.client_addr);
 
-                    let bytes = try_ready!(self.client.try_write(&mut self.buf[0..self.num_bytes]));
+                    let bytes = try_ready!(self.client.try_write_buf(&mut self.buf));
                     trace!("Wrote {} bytes to {}", bytes, self.client_addr);
 
                     if bytes == 0 {
-                        self.num_bytes = 0;
                         self.state = ConnectionState::ClientReading;
                         trace!("State switched to {:?}", self.state);
                         trace!("Bailing out of loop");
                         break;
-                    } else {
-                        self.num_bytes -= bytes;
                     }
                 }
             }

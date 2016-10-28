@@ -4,6 +4,7 @@ extern crate env_logger;
 #[macro_use] extern crate tokio_core;
 #[macro_use] extern crate tokio_proto;
 extern crate tokio_timer;
+extern crate bytes;
 
 // pub mod for now until the entire API is used internally
 pub mod pool;
