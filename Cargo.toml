@@ -12,6 +12,7 @@ tokio-core = "0.1.0"
 tokio-proto = { git = "https://github.com/tokio-rs/tokio-proto" }
 tokio-timer = { git = "https://github.com/tokio-rs/tokio-timer" }
 bytes = { git = "https://github.com/carllerche/bytes" }
+nom = "1.2.4"
 
 [[bin]]
 name = "alacrity"
