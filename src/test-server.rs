@@ -8,15 +8,15 @@ fn main() {
     for stream in listener.incoming() {
         match stream {
             Ok(mut stream) => {
-                let mut buf = Vec::new();
-                let bytes = stream.read_to_end(&mut buf).unwrap();
+                let mut buf = [0u8; 1024];
+                let bytes = stream.read(&mut buf).unwrap();
 
                 println!("Read {} bytes", bytes);
                 std::io::stdout().flush().unwrap();
 
-                stream.write_all(&buf).unwrap();
+                let bytes = stream.write(&buf[0..bytes]).unwrap();
 
-                println!("Wrote {} bytes", buf.len());
+                println!("Wrote {} bytes", bytes);
                 std::io::stdout().flush().unwrap();
             },
             Err(e) => { panic!("Connection failed - {}", e) }
