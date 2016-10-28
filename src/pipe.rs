@@ -1,5 +1,4 @@
 use std::io;
-use std::net::SocketAddr;
 
 use futures::{Future, Poll, Async};
 use tokio_core::net::TcpStream;
@@ -16,8 +15,6 @@ enum ConnectionState {
 
 #[must_use = "Must use Pipe"]
 pub struct Pipe {
-    client_addr: SocketAddr,
-    server_addr: SocketAddr,
     client: TcpStream,
     server: TcpStream,
     state: ConnectionState,
@@ -27,10 +24,8 @@ pub struct Pipe {
 }
 
 impl Pipe {
-    pub fn new(client_addr: SocketAddr, client: TcpStream, server_addr: SocketAddr, server: TcpStream) -> Pipe {
+    pub fn new(client: TcpStream, server: TcpStream) -> Pipe {
         Pipe {
-            client_addr: client_addr,
-            server_addr: server_addr,
             client: client,
             server: server,
             state: ConnectionState::ClientReading,
@@ -50,10 +45,10 @@ impl Future for Pipe {
 
             match self.state {
                 ConnectionState::ClientReading => {
-                    trace!("Reading from {}", self.client_addr);
+                    trace!("Reading from {}", self.client.local_addr().unwrap());
 
                     let bytes = try_ready!(self.client.try_read_buf(&mut self.buf));
-                    trace!("Read {} bytes from {}", bytes, self.client_addr);
+                    trace!("Read {} bytes from {}", bytes, self.client.local_addr().unwrap());
 
                     if bytes == 0 {
                         self.state = ConnectionState::ServerWriting;
@@ -62,10 +57,10 @@ impl Future for Pipe {
                 }
 
                 ConnectionState::ServerWriting => {
-                    trace!("Writing to {}", self.server_addr);
+                    trace!("Writing to {}", self.server.peer_addr().unwrap());
 
                     let bytes = try_ready!(self.server.try_write_buf(&mut self.buf));
-                    trace!("Wrote {} bytes to {}", bytes, self.server_addr);
+                    trace!("Wrote {} bytes to {}", bytes, self.server.peer_addr().unwrap());
 
                     if bytes == 0 {
                         self.state = ConnectionState::ServerReading;
@@ -74,10 +69,10 @@ impl Future for Pipe {
                 }
 
                 ConnectionState::ServerReading => {
-                    trace!("Reading from {}", self.server_addr);
+                    trace!("Reading from {}", self.server.peer_addr().unwrap());
 
                     let bytes = try_ready!(self.server.try_read_buf(&mut self.buf));
-                    trace!("Read {} bytes from {}", bytes, self.server_addr);
+                    trace!("Read {} bytes from {}", bytes, self.server.peer_addr().unwrap());
 
                     if bytes == 0 {
                         self.state = ConnectionState::ClientWriting;
@@ -86,10 +81,10 @@ impl Future for Pipe {
                 }
 
                 ConnectionState::ClientWriting => {
-                    trace!("Writing to {}", self.client_addr);
+                    trace!("Writing to {}", self.client.local_addr().unwrap());
 
                     let bytes = try_ready!(self.client.try_write_buf(&mut self.buf));
-                    trace!("Wrote {} bytes to {}", bytes, self.client_addr);
+                    trace!("Wrote {} bytes to {}", bytes, self.client.local_addr().unwrap());
 
                     if bytes == 0 {
                         self.state = ConnectionState::ClientReading;

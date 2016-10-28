@@ -103,9 +103,7 @@ fn main() {
                 // Note: this is a bi-directional pipe. I should probably change the name so I do
                 // not confuse people who assume this is a conventional uni-directional pipe.
                 pipe::Pipe::new(
-                    addr,
                     sock,
-                    backend,
                     server
                 )
 
