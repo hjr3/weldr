@@ -13,9 +13,12 @@ tokio-proto = { git = "https://github.com/tokio-rs/tokio-proto" }
 tokio-timer = { git = "https://github.com/tokio-rs/tokio-timer" }
 bytes = { git = "https://github.com/carllerche/bytes" }
 
+[dev-dependencies]
+hyper = "0.9"
+
 [[bin]]
 name = "alacrity"
-path = "src/main.rs"
+path = "src/alacrity.rs"
 
 [[bin]]
 name = "test-server"

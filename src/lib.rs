@@ -1,5 +1,4 @@
 #[macro_use] extern crate log;
-extern crate env_logger;
 #[macro_use] extern crate futures;
 #[macro_use] extern crate tokio_core;
 #[macro_use] extern crate tokio_proto;
@@ -10,7 +9,6 @@ extern crate bytes;
 pub mod pool;
 mod pipe;
 
-use std::env;
 use std::io::{Error, ErrorKind};
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -21,13 +19,7 @@ use tokio_core::reactor::{Core, Timeout};
 use tokio_core::net::{TcpListener, TcpStream};
 use pool::Pool;
 
-fn main() {
-    env_logger::init().unwrap();
-
-    let addr = env::args().nth(1).unwrap_or("127.0.0.1:8080".to_string());
-    let addr = addr.parse::<SocketAddr>().unwrap();
-
-    let backend = env::args().nth(2).unwrap_or("127.0.0.1:12345".to_string());
+pub fn new_proxy(addr: SocketAddr, backend: String) {
     let mut pool = Pool::new(vec![backend]).unwrap();
 
     // Create the event loop that will drive this server
@@ -83,57 +75,57 @@ fn main() {
                         Error::new(ErrorKind::TimedOut, "Pool connection timeout")
                     })
             }).map_err(|(e, _)| {
-                // this is taking our `(io:Error, Timeout future)` tuple and mapping it to only be
-                // `io::Error`. we do this to have a consistent type in `Err` from here on out
-                e
-            }).and_then(|tcp| {
-                // we use this `and_then` to flatten out our result. our call to `.map` above
-                // returned either `Ok` or `Err`. we want to chain the ``Ok(TcpStream)` to the next
-                // step and send the `Err` down to the `map_err` at the bottom.
-                //
-                // if we did not do this, then our next `and_then` would have to match on the
-                // result and chain the error to the next `and_then` where we could chain the error
-                // again. this defeats the purpose of combinators/railroad style dev/etc
-                tcp
-            }).and_then(move |server| {
+            // this is taking our `(io:Error, Timeout future)` tuple and mapping it to only be
+            // `io::Error`. we do this to have a consistent type in `Err` from here on out
+            e
+        }).and_then(|tcp| {
+            // we use this `and_then` to flatten out our result. our call to `.map` above
+            // returned either `Ok` or `Err`. we want to chain the ``Ok(TcpStream)` to the next
+            // step and send the `Err` down to the `map_err` at the bottom.
+            //
+            // if we did not do this, then our next `and_then` would have to match on the
+            // result and chain the error to the next `and_then` where we could chain the error
+            // again. this defeats the purpose of combinators/railroad style dev/etc
+            tcp
+        }).and_then(move |server| {
 
-                // Pipe implements future. The `Pipe` is hiding away a state machine that is
-                // managing non-blocking reads and writes between a client and server.
-                //
-                // Note: this is a bi-directional pipe. I should probably change the name so I do
-                // not confuse people who assume this is a conventional uni-directional pipe.
-                pipe::Pipe::new(
-                    addr,
-                    sock,
-                    backend,
-                    server
-                )
+            // Pipe implements future. The `Pipe` is hiding away a state machine that is
+            // managing non-blocking reads and writes between a client and server.
+            //
+            // Note: this is a bi-directional pipe. I should probably change the name so I do
+            // not confuse people who assume this is a conventional uni-directional pipe.
+            pipe::Pipe::new(
+                addr,
+                sock,
+                backend,
+                server
+            )
 
-            }).map(|()| {
-                // the above `Pipe` implements `Future` with `Item=()`, so that is the value passed
-                // to our closure. we could have also returned the total bytes proxied, the time it
-                // took, etc
+        }).map(|()| {
+            // the above `Pipe` implements `Future` with `Item=()`, so that is the value passed
+            // to our closure. we could have also returned the total bytes proxied, the time it
+            // took, etc
 
-                debug!("Finished proxying");
+            debug!("Finished proxying");
 
-                // we have to return `()`, which will create a `Future<Item=(), Error=_>` in order
-                // for `handle.spawn` to work
-                //
-                // You can elide `()` as functions return `()` by default. Note: _elide_ is what
-                // really smart CS PhD people use to confuse the general masses. The word _elide_
-                // means to omit. It is used all over Rust documentation, so now you know.
-                ()
-            }).map_err(|e| {
-                error!("Error trying proxy - {:?}", e);
+            // we have to return `()`, which will create a `Future<Item=(), Error=_>` in order
+            // for `handle.spawn` to work
+            //
+            // You can elide `()` as functions return `()` by default. Note: _elide_ is what
+            // really smart CS PhD people use to confuse the general masses. The word _elide_
+            // means to omit. It is used all over Rust documentation, so now you know.
+            ()
+        }).map_err(|e| {
+            error!("Error trying proxy - {:?}", e);
 
-                // we have to return `()`, which will create a `Future<Item=_, Error=()>` in order
-                // for `handle.spawn` to work
-                //
-                // You can elide `()` as functions return `()` by default. Note: _elide_ is what
-                // really smart CS PhD people use to confuse the general masses. The word _elide_
-                // means to omit. It is used all over Rust documentation, so now you know.
-                ()
-            });
+            // we have to return `()`, which will create a `Future<Item=_, Error=()>` in order
+            // for `handle.spawn` to work
+            //
+            // You can elide `()` as functions return `()` by default. Note: _elide_ is what
+            // really smart CS PhD people use to confuse the general masses. The word _elide_
+            // means to omit. It is used all over Rust documentation, so now you know.
+            ()
+        });
 
         // spawn expects Future<Item=(), Error=()>
         //
