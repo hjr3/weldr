@@ -1,10 +1,12 @@
 use std::io;
-use std::net::SocketAddr;
 
 use futures::{Future, Poll, Async};
 use tokio_core::net::TcpStream;
 use tokio_proto::{TryRead, TryWrite};
+use bytes::Buf;
 use bytes::buf::RingBuf;
+
+use http_parser::{self, HttpState, RequestState, ResponseState};
 
 #[derive(Debug)]
 enum ConnectionState {
@@ -16,8 +18,6 @@ enum ConnectionState {
 
 #[must_use = "Must use Pipe"]
 pub struct Pipe {
-    client_addr: SocketAddr,
-    server_addr: SocketAddr,
     client: TcpStream,
     server: TcpStream,
     state: ConnectionState,
@@ -27,10 +27,8 @@ pub struct Pipe {
 }
 
 impl Pipe {
-    pub fn new(client_addr: SocketAddr, client: TcpStream, server_addr: SocketAddr, server: TcpStream) -> Pipe {
+    pub fn new(client: TcpStream, server: TcpStream) -> Pipe {
         Pipe {
-            client_addr: client_addr,
-            server_addr: server_addr,
             client: client,
             server: server,
             state: ConnectionState::ClientReading,
@@ -43,6 +41,9 @@ impl Future for Pipe {
     type Item = ();
     type Error = io::Error;
 
+    // assuming that we are http 1.1, which says a request/response must complete before
+    // the next request/response can be served. this is a naive approach and will be
+    // changed once http2 support is put in.
     fn poll(&mut self) -> Poll<(), io::Error> {
         trace!("Polling...");
 
@@ -50,52 +51,84 @@ impl Future for Pipe {
 
             match self.state {
                 ConnectionState::ClientReading => {
-                    trace!("Reading from {}", self.client_addr);
+                    trace!("Reading from {}", self.client.local_addr().unwrap());
 
                     let bytes = try_ready!(self.client.try_read_buf(&mut self.buf));
-                    trace!("Read {} bytes from {}", bytes, self.client_addr);
+                    trace!("Read {} bytes from {}", bytes, self.client.local_addr().unwrap());
 
-                    if bytes == 0 {
-                        self.state = ConnectionState::ServerWriting;
-                        trace!("State switched to {:?}", self.state);
+                    let state = http_parser::parse_request_until_stop(
+                        HttpState::new(),
+                        "",
+                        self.buf.bytes());
+
+                    debug!("Parse request state is {:?}", state);
+
+                    match state.request {
+                        Some(RequestState::Request(_,_,_)) => {
+                            self.state = ConnectionState::ServerWriting;
+                            trace!("State switched to {:?}", self.state);
+                        }
+                        Some(RequestState::Error(e)) => {
+                            error!("Error when parsing request: {:?}", e);
+                            break;
+                        }
+                        _ => {
+                            trace!("Not enough progress parsing request. Remaining at {:?}", self.state);
+                        }
                     }
                 }
 
                 ConnectionState::ServerWriting => {
-                    trace!("Writing to {}", self.server_addr);
+                    trace!("Writing to {}", self.server.peer_addr().unwrap());
 
-                    let bytes = try_ready!(self.server.try_write_buf(&mut self.buf));
-                    trace!("Wrote {} bytes to {}", bytes, self.server_addr);
-
-                    if bytes == 0 {
+                    if self.buf.bytes().len() == 0 {
                         self.state = ConnectionState::ServerReading;
-                        trace!("State switched to {:?}", self.state);
+                        trace!("Buffer is empty. State switched to {:?}", self.state);
+                    } else {
+                        let bytes = try_ready!(self.server.try_write_buf(&mut self.buf));
+                        trace!("Wrote {} bytes to {}", bytes, self.server.peer_addr().unwrap());
                     }
                 }
 
                 ConnectionState::ServerReading => {
-                    trace!("Reading from {}", self.server_addr);
+                    trace!("Reading from {}", self.server.peer_addr().unwrap());
 
                     let bytes = try_ready!(self.server.try_read_buf(&mut self.buf));
-                    trace!("Read {} bytes from {}", bytes, self.server_addr);
+                    trace!("Read {} bytes from {}", bytes, self.server.peer_addr().unwrap());
 
-                    if bytes == 0 {
-                        self.state = ConnectionState::ClientWriting;
-                        trace!("State switched to {:?}", self.state);
+                    let state = http_parser::parse_response_until_stop(
+                        HttpState::new(),
+                        "",
+                        self.buf.bytes());
+
+                    debug!("Parse response state is {:?}", state);
+
+                    match state.response {
+                        Some(ResponseState::ResponseWithBody(_,_,_)) => {
+                            self.state = ConnectionState::ClientWriting;
+                            trace!("State switched to {:?}", self.state);
+                        }
+                        Some(ResponseState::Error(e)) => {
+                            error!("Error when parsing response: {:?}", e);
+                            break;
+                        }
+                        _ => {
+                            trace!("Not enough progress parsing response. Remaining at {:?}", self.state);
+                        }
                     }
                 }
 
                 ConnectionState::ClientWriting => {
-                    trace!("Writing to {}", self.client_addr);
+                    trace!("Writing to {}", self.client.local_addr().unwrap());
 
-                    let bytes = try_ready!(self.client.try_write_buf(&mut self.buf));
-                    trace!("Wrote {} bytes to {}", bytes, self.client_addr);
-
-                    if bytes == 0 {
+                    if self.buf.bytes().len() == 0 {
                         self.state = ConnectionState::ClientReading;
-                        trace!("State switched to {:?}", self.state);
-                        trace!("Bailing out of loop");
+                        trace!("Buffer is empty. State switched to {:?}", self.state);
+                        trace!("Request/Response is finished. Bailing out of loop.");
                         break;
+                    } else {
+                        let bytes = try_ready!(self.client.try_write_buf(&mut self.buf));
+                        trace!("Wrote {} bytes to {}", bytes, self.client.local_addr().unwrap());
                     }
                 }
             }
