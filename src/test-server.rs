@@ -1,25 +1,31 @@
-use std::io::prelude::*;
-use std::net::TcpListener;
+#[macro_use] extern crate rustful;
+
+#[macro_use] extern crate log;
+extern crate env_logger;
+
+use std::env;
+use rustful::{Server, Context, Response, TreeRouter};
+
+fn index(_context: Context, response: Response) {
+    response.send("Hello World");
+}
 
 fn main() {
 
-    let listener = TcpListener::bind("127.0.0.1:12345").unwrap();
+    let threads = env::var("THREADS").ok().and_then(|t| {
+        t.parse::<usize>().ok().or(None)
+    });
 
-    for stream in listener.incoming() {
-        match stream {
-            Ok(mut stream) => {
-                let mut buf = [0u8; 1024];
-                let bytes = stream.read(&mut buf).unwrap();
+    env_logger::init().expect("Failed to init logger");
 
-                println!("Read {} bytes", bytes);
-                std::io::stdout().flush().unwrap();
-
-                let bytes = stream.write(&buf[0..bytes]).unwrap();
-
-                println!("Wrote {} bytes", bytes);
-                std::io::stdout().flush().unwrap();
-            },
-            Err(e) => { panic!("Connection failed - {}", e) }
-        }
-    }
+    Server {
+        host: 12345.into(),
+        handlers: insert_routes!{
+            TreeRouter::new() => {
+                "/" => Get: index as fn(Context, Response),
+            }
+        },
+        threads: threads,
+        ..Server::default()
+    }.run().expect("Could not start server");
 }
