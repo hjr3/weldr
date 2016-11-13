@@ -17,9 +17,12 @@ nom = "1.2.4"
 
 rustful = "0.9"
 
+[dev-dependencies]
+hyper = "0.9"
+
 [[bin]]
 name = "alacrity"
-path = "src/main.rs"
+path = "src/alacrity.rs"
 
 [[bin]]
 name = "test-server"
