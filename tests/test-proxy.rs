@@ -1,27 +1,35 @@
 extern crate hyper;
-// extern crate proxy;
+extern crate alacrity;
 
 use hyper::server::{Server, Request, Response, Handler};
 use hyper::Client;
 use std::io::Read;
 use std::net::SocketAddr;
+use alacrity::pool::Pool;
+use std::{thread, time};
 
 
 fn with_server<H: Handler + 'static, R>(handle: H, test: &Fn(u16) -> R) -> R {
-    let mut server = Server::http("localhost:0").unwrap().handle(handle).unwrap();
+    let mut server = Server::http("127.0.0.1:0").unwrap().handle(handle).unwrap();
     let port = server.socket.port();
 
     // test directly against http server
-    let result_direct = test(port);
+    test(port);
 
     // test against proxy
-    let proxy_addr = "127.0.0.1:8081".to_string();
-    let addr = proxy_addr.parse::<SocketAddr>().unwrap();
-//    alacrity::new_proxy(addr, socket_addr(port));
-//    let result_proxy = test(8081);
+    thread::spawn(move || {
+        let proxy_addr = "127.0.0.1:8081".to_string();
+        let addr = proxy_addr.parse::<SocketAddr>().unwrap();
+        let pool = Pool::new(vec![socket_addr(port)]).unwrap();
+        alacrity::proxy::listen(addr, pool.clone()).expect("Failed to start server");
+    });
+    // TODO: need a better way to wait for proxy to be up
+    thread::sleep(time::Duration::from_millis(50));
+    let result_proxy = test(8081);
 
+    // TODO: close proxy
     server.close().unwrap();
-    result_direct
+    result_proxy
 }
 
 fn url(port: u16) -> String {

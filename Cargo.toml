@@ -22,7 +22,7 @@ hyper = "0.9"
 
 [[bin]]
 name = "alacrity"
-path = "src/main.rs"
+path = "src/alacrity.rs"
 
 [[bin]]
 name = "test-server"
