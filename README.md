@@ -1,6 +1,6 @@
 # Alacrity
 
-A tcp proxy written in Rust.
+A HTTP 1.1 proxy written in Rust using tokio.
 
 ## Design
 
@@ -17,14 +17,16 @@ Credit to Hoverbear who talked through some of the design with me.
 
 ## Running Protype
 
+   * `RUST_LOG=alacrity cargo run --bin alacrity`
    * `cargo run --bin test-server`
-   * `cargo run --bin alacrity`
-   * `echo "hi" | nc localhost 8080`
+      * Due to an issue with cargo not allowing two `cargo run` at the same time, I do `RUST_LOG=hyper ./target/debug/test-server`
+   * `curl -vvv localhost:8080`
 
 ## High Level Roadmap
 
    * [x] Proxy prototype using tokio-core
    * [x] Create Server pool
+   * [ ] Proxy prototype using tokio-proto (in progress)
    * [ ] Management API
    * [ ] Support health checks
    * [ ] Server pool managed by raft
@@ -92,4 +94,13 @@ GET /stats/detail
 
 ## License
 
-Dunno yet!
+Licensed under either of
+ * Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
+ * MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
+at your option.
+
+### Contribution
+
+Unless you explicitly state otherwise, any contribution intentionally submitted
+for inclusion in the work by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any
+additional terms or conditions.

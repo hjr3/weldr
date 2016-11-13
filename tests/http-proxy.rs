@@ -1,5 +1,5 @@
 extern crate hyper;
-extern crate alacrity;
+// extern crate proxy;
 
 use hyper::server::{Server, Request, Response, Handler};
 use hyper::Client;
