@@ -1,5 +1,7 @@
 extern crate hyper;
 extern crate alacrity;
+extern crate env_logger;
+#[macro_use] extern crate log;
 
 use hyper::server::{Server, Request, Response, Handler};
 use hyper::Client;
@@ -43,6 +45,8 @@ fn socket_addr(port: u16) -> String {
 
 #[test]
 fn get_on_http_server() {
+    let _ = env_logger::init();
+
     fn handle(_: Request, res: Response) {
         res.send(b"hello world").unwrap();
     }
