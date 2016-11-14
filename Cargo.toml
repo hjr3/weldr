@@ -16,6 +16,8 @@ bytes = { git = "https://github.com/carllerche/bytes" }
 nom = "1.2.4"
 
 rustful = "0.9"
+rustc-serialize = "0.3.19"
+uuid = { version = "0.3.1", features = ["v4"] }
 
 [dev-dependencies]
 hyper = "0.9"

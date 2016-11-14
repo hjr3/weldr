@@ -14,6 +14,7 @@ use std::{thread, time};
 fn with_server<H: Handler + 'static, R>(handle: H, test: &Fn(u16) -> R) -> R {
     let mut server = Server::http("127.0.0.1:0").unwrap().handle(handle).unwrap();
     let port = server.socket.port();
+    let server_addr = server.socket;
 
     // test directly against http server
     test(port);
@@ -24,7 +25,7 @@ fn with_server<H: Handler + 'static, R>(handle: H, test: &Fn(u16) -> R) -> R {
         // https://github.com/hjr3/alacrity/issues/12
         let proxy_addr = "127.0.0.1:8081".to_string();
         let addr = proxy_addr.parse::<SocketAddr>().unwrap();
-        let pool = Pool::new(vec![socket_addr(port)]).unwrap();
+        let pool = Pool::with_servers(vec![server_addr]);
         alacrity::proxy::listen(addr, pool.clone()).expect("Failed to start server");
     });
     // TODO: need a better way to wait for proxy to be up
@@ -40,11 +41,6 @@ fn with_server<H: Handler + 'static, R>(handle: H, test: &Fn(u16) -> R) -> R {
 fn url(port: u16) -> String {
     format!("http://localhost:{}", port)
 }
-
-fn socket_addr(port: u16) -> String {
-    format!("127.0.0.1:{}", port)
-}
-
 
 #[test]
 fn get_on_http_server() {
