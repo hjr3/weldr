@@ -25,12 +25,7 @@ Credit to Hoverbear who talked through some of the design with me.
 
 ## High Level Roadmap
 
-   * [x] Proxy prototype using tokio-core
-   * [x] Create Server pool
-   * [ ] Proxy prototype using tokio-proto (in progress)
-   * [ ] Management API
-   * [ ] Support health checks
-   * [ ] Server pool managed by raft
+We are currently working on a [0.1.0](https://github.com/hjr3/alacrity/issues?utf8=%E2%9C%93&q=is%3Aissue%20milestone%3Av0.1.0%20) release.
 
 ## Management API Design
 
