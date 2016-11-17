@@ -52,33 +52,29 @@ fn hello_request_method(req: Request, mut res: Response) {
 }
 
 #[test]
-fn get_on_http_server() {
+fn method_on_http_server() {
+    use hyper::method::Method;
+    use std::str::FromStr;
+
     let _ = env_logger::init();
 
-    with_server(hello_request_method, 8081, &|port| {
-        let client = Client::new();
-        let url = url(port);
-        let mut res = client.get(&url).send().unwrap();
-        assert_eq!(res.status, hyper::Ok);
+    let methods = vec!("GET", "DELETE", "PATCH", "OPTIONS", "POST", "PUT", "TRACE", "HEAD", "CONNECT", "GARBAGE");
+    let port = 8081;
 
-        let mut body = String::new();
-        res.read_to_string(&mut body).unwrap();
-        assert_eq!(body, "hello GET");
-    });
-}
+    for (i, method) in methods.iter().enumerate() {
+        with_server(hello_request_method, port + i as u16, &|port| {
+            let client = Client::new();
+            let url = url(port);
+            let mut res = client.request(Method::from_str(&method).unwrap(), &url).send().unwrap();
+            assert_eq!(res.status, hyper::Ok);
 
-#[test]
-fn delete_on_http_server() {
-    let _ = env_logger::init();
-
-    with_server(hello_request_method, 8082, &|port| {
-        let client = Client::new();
-        let url = url(port);
-        let mut res = client.delete(&url).send().unwrap();
-        assert_eq!(res.status, hyper::Ok);
-
-        let mut body = String::new();
-        res.read_to_string(&mut body).unwrap();
-        assert_eq!(body, "hello DELETE");
-    });
+            // missing HEAD, CONNECT as the server cannot return any body
+            if *method != "HEAD" && *method != "CONNECT" {
+                let mut body = String::new();
+                res.read_to_string(&mut body).unwrap();
+                let expected = format!("hello {}", method);
+                assert_eq!(body, expected);
+            }
+        });
+    };
 }
