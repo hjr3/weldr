@@ -1,15 +1,16 @@
 # Alacrity
 
-A HTTP 1.1 proxy written in Rust using tokio.
+A HTTP 1.1 load balancer written in Rust using tokio.
 
 ## Design
 
-The goal is to build a proxy that works well in the dynamic VM/container environments that are starting to be more common.
+The goal is to build an ELB-like load balancer that works well in the dynamic VM/container environments that are starting to be more common. It is expected that one load balancer be used for one cluster. As such, there is no
 
-   * Servers must register with the proxy using an HTTP POST to the management IP.
+
+   * Servers must register with the load balancer using an HTTP POST to the management IP.
       * The POST payload contains the health check information.
-   * The proxy will keep that server active in the pool as long as the health succeeds.
-   * The pool is managed by Raft, allowing a cluster of redundant proxy servers. This should allow an active/passive setup out of the box.
+   * The load balancer will keep that server active in the pool as long as the health succeeds.
+   * The pool is managed by Raft, allowing a cluster of redundant load balancer servers. This should allow an active/passive setup out of the box.
       * Note: The [raft-rs](https://github.com/Hoverbear/raft-rs) crate does not currently support dynamic membership.
    * Async IO is done using tokio-core (which is built on top of mio).
 

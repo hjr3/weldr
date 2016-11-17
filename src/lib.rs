@@ -7,6 +7,9 @@ extern crate bytes;
 #[macro_use] extern crate nom;
 #[macro_use] extern crate log;
 extern crate env_logger;
+#[macro_use] extern crate rustful;
+extern crate rustc_serialize;
+extern crate uuid;
 
 // pub mod for now until the entire API is used internally
 pub mod pool;
@@ -15,3 +18,4 @@ mod framed;
 pub mod proxy;
 mod backend;
 mod frontend;
+pub mod mgmt;
