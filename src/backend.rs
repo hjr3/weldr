@@ -57,14 +57,29 @@ impl Serialize for HttpSerializer {
     fn serialize(&mut self, msg: Self::In, buf: &mut ByteBuf) {
         trace!("Serializing message frame: {:?}", msg);
 
-        let input =
-            b"GET / HTTP/1.1\r\n\
-              Host: www.example.com\r\n\
-              Accept: */*\r\n\
-              \r\n";
+        match msg {
+            Frame::Message { message, body: _ } => {
+                let input = format!(
+                    "{} {} HTTP/1.1\r\n\
+                     Host: www.example.com\r\n\
+                     Accept: */*\r\n\
+                     \r\n",
+                    message.method, message.uri);
 
-        trace!("Trying to write {} bytes", input.len());
-        buf.copy_from_slice(&input[..]);
-        trace!("Copied {} bytes", input.len());
+                trace!("Computed message to send to backend: {}", input);
+                trace!("Trying to write {} bytes", input.len());
+                buf.copy_from_slice(input.as_bytes());
+                trace!("Copied {} bytes", input.len());
+            },
+            Frame::Body { chunk} => {
+                error!("Serializing body is not implemented: {:?}", chunk);
+                ()
+            },
+            Frame::Error { error } => {
+                error!("Dealing with error is not implemented: {:?}", error);
+                ()
+            },
+            Frame::Done => (),
+        }
     }
 }

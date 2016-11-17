@@ -22,7 +22,7 @@ pub struct Pipe {
     server: TcpStream,
     state: ConnectionState,
 
-    /// A buffer to keep track of the data betewen the client and server
+    /// A buffer to keep track of the data between the client and server
     buf: RingBuf,
 }
 
