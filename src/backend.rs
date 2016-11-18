@@ -1,6 +1,7 @@
 use std::io;
 
 use futures::{Poll, Async};
+use tokio_core::io::frame::{EasyBuf, Framed, Codec};
 use tokio_proto::pipeline::Frame;
 
 use bytes::{Buf, BufMut};
@@ -8,14 +9,19 @@ use bytes::ByteBuf;
 
 use http;
 
-use framed::{Parse, Serialize};
+pub struct HttpCodec {}
 
-pub struct HttpParser {}
+impl HttpCodec {
+    fn new() -> HttpCodec {
+        HttpCodec {}
+    }
+}
 
-impl Parse for HttpParser {
+impl Codec for HttpCodec {
+    type In = Frame<http::RequestHead, http::Chunk, http::Error>;
     type Out = Frame<http::Response, http::Chunk, http::Error>;
 
-    fn parse(&mut self, buf: &mut ByteBuf) -> Poll<Self::Out, io::Error> {
+    fn decode(&mut self, buf: &mut EasyBuf) -> Result<Option<Self::In>, io::Error> {
         if buf.len() == 0 {
             return Ok(
                 Async::Ready(
@@ -41,20 +47,8 @@ impl Parse for HttpParser {
             )
         );
     }
-}
 
-pub struct HttpSerializer {}
-
-impl Serialize for HttpSerializer {
-
-    type In = Frame<http::RequestHead, http::Chunk, http::Error>;
-
-    /// Serializes a frame into the buffer provided.
-    ///
-    /// This method will serialize `msg` into the byte buffer provided by `buf`.
-    /// The `buf` provided is an internal buffer of the `ProxyFramed` instance and
-    /// will be written out when possible.
-    fn serialize(&mut self, msg: Self::In, buf: &mut ByteBuf) {
+    fn encode(&mut self, msg: Self::Out, buf: &mut Vec<u8>) {
         trace!("Serializing message frame: {:?}", msg);
 
         match msg {
