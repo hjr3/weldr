@@ -7,9 +7,9 @@ use tokio_service::Service;
 use tokio_proto::{pipeline, Message, Body};
 use tokio_core::reactor::{Core, Handle};
 use tokio_core::net::{TcpStream, TcpListener};
+use tokio_core::io::frame::framed;
 
 use http;
-use framed;
 use backend;
 use frontend;
 use pool::Pool;
@@ -34,7 +34,7 @@ impl Service for Proxy {
         // This is a future to a framed transport. The call to pipline::connect below expects a
         // future to a socket.
         let framed = TcpStream::connect(&addr, &self.handle.clone()).map(|sock| {
-            framed::ProxyFramed::new(sock, backend::HttpParser {}, backend::HttpSerializer {})
+            framed(sock, backend::HttpCodec::new())
         });
 
         let pipeline = pipeline::connect(framed, &self.handle.clone());
@@ -61,7 +61,7 @@ pub fn listen(addr: SocketAddr, pool: Pool) -> result::Result<(), http::Error> {
             handle: handle.clone(),
             pool: pool.clone(),
         };
-        let framed = framed::ProxyFramed::new(sock, frontend::HttpParser {}, frontend::HttpSerializer {});
+        let framed = framed(sock, frontend::HttpCodec::new());
         let pipeline = pipeline::Server::new(service, framed).map(|_| ()).map_err(|e| {
             error!("Pipeline error occurred: {:?}", e);
             ()

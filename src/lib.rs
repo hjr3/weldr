@@ -14,7 +14,6 @@ extern crate uuid;
 // pub mod for now until the entire API is used internally
 pub mod pool;
 pub mod http;
-mod framed;
 pub mod proxy;
 mod backend;
 mod frontend;
