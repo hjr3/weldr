@@ -47,6 +47,34 @@ pub struct RequestHead {
     pub headers: Vec<Header>,
 }
 
+impl fmt::Display for RequestHead {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        try!(write!(f, "{} {} {}\r\n", self.method, self.uri, self.version));
+
+        for header in &self.headers {
+            try!(write!(f, "{}\r\n", header));
+        }
+
+        write!(f, "\r\n")
+    }
+}
+
+impl RequestHead {
+    pub fn content_length(&self) -> Option<usize> {
+        self.headers
+            .iter()
+            .find(|h| h.name.to_ascii_lowercase().as_str() == "content-length")
+            .map(|h| h.value.parse::<usize>().ok())
+            .and_then(|len| len)
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub struct Request {
+    pub head: RequestHead,
+    pub body: Vec<Chunk>,
+}
+
 #[derive(Debug, Eq, PartialEq)]
 pub struct ResponseHead {
     pub version: Version,

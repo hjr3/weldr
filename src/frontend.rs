@@ -3,7 +3,7 @@ use std::io;
 use futures::{Poll, Async};
 use tokio_proto::pipeline::Frame;
 
-use bytes::{Buf, BufMut};
+use bytes::BufMut;
 use bytes::ByteBuf;
 
 use http;
@@ -13,7 +13,7 @@ use framed::{Parse, Serialize};
 pub struct HttpParser {}
 
 impl Parse for HttpParser {
-    type Out = Frame<http::RequestHead, http::Chunk, http::Error>;
+    type Out = Frame<http::Request, http::Chunk, http::Error>;
 
     fn parse(&mut self, buf: &mut ByteBuf) -> Poll<Self::Out, io::Error> {
         if buf.len() == 0 {
@@ -26,7 +26,12 @@ impl Parse for HttpParser {
 
         trace!("Attempting to parse bytes into HTTP Request");
 
-        let request = http::parser::parse_request_head(buf.bytes());
+        let mut parser = http::parser::RequestParser::new();
+        let request = match parser.parse_request(buf) {
+            Ok(Some(request)) => request,
+            Ok(None) => panic!("Not enough bytes to parse request"),
+            Err(e) => panic!("Error parsing request: {:?}", e),
+        };
 
         debug!("Parser created: {:?}", request);
 

@@ -44,17 +44,18 @@ fn url(port: u16) -> String {
     format!("http://localhost:{}", port)
 }
 
-fn hello_request_method(req: Request, mut res: Response) {
-    let body = format!("hello {}", req.method);
-    res.headers_mut().set(ContentLength(body.len() as u64));
-    let mut res = res.start().unwrap();
-    res.write_all(body.as_ref()).unwrap();
-}
 
 #[test]
 fn method_on_http_server() {
     use hyper::method::Method;
     use std::str::FromStr;
+
+    fn hello_request_method(req: Request, mut res: Response) {
+        let body = format!("hello {}", req.method);
+        res.headers_mut().set(ContentLength(body.len() as u64));
+        let mut res = res.start().unwrap();
+        res.write_all(body.as_ref()).unwrap();
+    }
 
     let _ = env_logger::init();
 
@@ -77,4 +78,28 @@ fn method_on_http_server() {
             }
         });
     };
+}
+
+#[test]
+fn request_body() {
+    fn hello_request_body(mut req: Request, mut res: Response) {
+        let mut body = String::new();
+        req.read_to_string(&mut body).unwrap();
+        res.headers_mut().set(ContentLength(body.len() as u64));
+        let mut res = res.start().unwrap();
+        res.write_all(body.as_ref()).unwrap();
+    }
+
+    let _ = env_logger::init();
+
+    with_server(hello_request_body, 8101, &|port| {
+        let client = Client::new();
+        let url = url(port);
+        let mut res = client.post(&url).body("hello").send().unwrap();
+        assert_eq!(res.status, hyper::Ok);
+
+        let mut body = String::new();
+        res.read_to_string(&mut body).unwrap();
+        assert_eq!(body, "hello");
+    });
 }
