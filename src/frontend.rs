@@ -57,25 +57,43 @@ impl Serialize for HttpSerializer {
     fn serialize(&mut self, msg: Self::In, buf: &mut ByteBuf) {
         trace!("Serializing message frame: {:?}", msg);
 
-        let m = match msg {
+        match msg {
             Frame::Message {
                 ref message,
                 body: _,
             } => {
-                message.0.as_slice()
+                let response = message;
+                let head = format!("{}", response.head).into_bytes();
+
+                trace!("Trying to write {} bytes from response head", head.len());
+                buf.copy_from_slice(&head[..]);
+                trace!("Copied {} bytes from response head", head.len());
+
+                match response.head.content_length() {
+                    Some(_) => {
+                        if let Some(chunk) = response.body.first() {
+                            trace!("Trying to write {} bytes from response chunk", chunk.0.len());
+                            buf.copy_from_slice(&chunk.0[..]);
+                            trace!("Copied {} bytes from response chunk", chunk.0.len());
+                        }
+                    }
+                    None => {
+                        panic!("Transfer encoding chunked not implemented");
+                    }
+                }
             }
             Frame::Error { error } => {
                 error!("Upstream error: {:?}", error);
-                b"HTTP/1.1 502 Bad Gateway\r\n\
+                let e = b"HTTP/1.1 502 Bad Gateway\r\n\
                   Content-Length: 0\r\n\
-                  \r\n"
+                  \r\n";
+
+                trace!("Trying to write {} bytes from response head", e.len());
+                buf.copy_from_slice(&e[..]);
+                trace!("Copied {} bytes from response head", e.len());
+
             }
             _ => unimplemented!(),
-        };
-
-        trace!("Trying to write {} bytes", m.len());
-        buf.copy_from_slice(&m[..]);
-        trace!("Copied {} bytes", m.len());
-
+        }
     }
 }

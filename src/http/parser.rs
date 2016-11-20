@@ -1,34 +1,10 @@
 use std::str;
-use std::ascii::AsciiExt;
 
-use nom::IResult;
-use nom::{digit,is_alphanumeric};
+use bytes::{Buf, ByteBuf};
+use nom::{IResult, Needed};
+use nom::is_alphanumeric;
 
-use http::{RequestHead, Header};
-
-#[derive(Debug, Eq, PartialEq)]
-pub struct ResponseHead {
-    pub version: String,
-    pub status: u16,
-    pub reason: String,
-    pub headers: Vec<Header>,
-}
-
-impl ResponseHead {
-    pub fn content_length(&self) -> Option<usize> {
-        self.headers
-            .iter()
-            .find(|h| h.name.to_ascii_lowercase().as_str() == "content-length")
-            .map(|h| h.value.parse::<usize>().ok())
-            .and_then(|len| len)
-    }
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub struct Response {
-    pub head: ResponseHead,
-    pub body: Vec<u8>,
-}
+use http::{RequestHead, Header, Response, ResponseHead, Version, Error, Chunk};
 
 pub fn parse_request_head(buf: &[u8]) -> RequestHead {
     match request_head(buf) {
@@ -46,24 +22,162 @@ pub fn parse_request_head(buf: &[u8]) -> RequestHead {
     }
 }
 
-pub fn parse_response(buf: &[u8]) -> Response {
-    match response_head(buf) {
-        IResult::Done(remaining, mut response_head) => {
+#[derive(Debug, Clone, Copy)]
+enum ResponseState {
+    StatusLine,
+    Headers,
+    Body(usize),
+    ChunkedBody,
+    Complete,
+}
 
-            match parse_headers(remaining) {
-                IResult::Done(remaining, mut headers) => {
-                    response_head.headers.append(&mut headers);
-                    assert!(response_head.content_length().unwrap() == remaining.len());
+pub struct ResponseParser {
+    state: ResponseState,
+    response: Option<Response>,
+}
 
-                    Response {
-                        head: response_head,
-                        body: Vec::from(remaining),
+impl ResponseParser {
+
+    pub fn new() -> ResponseParser {
+        ResponseParser {
+            state: ResponseState::StatusLine,
+            response: None,
+        }
+    }
+
+    /// Parse a response byte stream into a native object
+    ///
+    /// This function acts as a boundary between nom and tokio. Instead of leaking IResult into the
+    /// rest of the code, we map the three IResult variants to native Result/Option variants.
+    pub fn parse_response(&mut self, buf: &mut ByteBuf) -> Result<Option<Response>, Error> {
+        loop {
+            match self.state {
+                ResponseState::StatusLine => {
+                    let consumed = match status_line(buf.bytes()) {
+                        IResult::Done(remaining, response_head) => {
+                            self.response = Some(Response {
+                                head: response_head,
+                                body: Vec::new(),
+                            });
+
+                            self.state = ResponseState::Headers;
+
+                            buf.len() - remaining.len()
+                        }
+                        IResult::Incomplete(n) => {
+                            debug!("Incomplete parse attempt on frame. Needed {:?} more bytes", n);
+                            return Ok(None);
+                        }
+                        IResult::Error(e) => {
+                            error!("Error parsing reponse status line: {:?}", e);
+                            return Err(Error::Invalid);
+                        }
+                    };
+
+                    buf.drain_to(consumed);
+                }
+                ResponseState::Headers => {
+                    let consumed = match parse_headers(buf.bytes()) {
+                        IResult::Done(remaining, mut headers) => {
+                            let mut response = self.response.take().expect("Response does not exist");
+                            response.head.headers.append(&mut headers);
+
+                            match response.head.content_length() {
+                                Some(content_length) => {
+                                    self.state = ResponseState::Body(content_length);
+                                }
+                                None => {
+                                    self.state = ResponseState::ChunkedBody;
+                                }
+                            }
+
+                            self.response = Some(response);
+
+                            buf.len() - remaining.len()
+                        }
+                        IResult::Incomplete(n) => {
+                            debug!("Incomplete parse attempt on frame. Needed {:?} more bytes", n);
+                            return Ok(None);
+                        }
+                        IResult::Error(e) => {
+                            error!("Error parsing reponse headers: {:?}", e);
+                            return Err(Error::Invalid);
+                        }
+                    };
+
+                    buf.drain_to(consumed);
+                }
+                ResponseState::Body(content_length) => {
+                    // buffer does not contain enough bytes to finish parsing the body,
+                    // so return incomplete
+                    if buf.len() < content_length {
+                        return Ok(None);
+                    }
+
+                    let body = buf.drain_to(content_length);
+
+                    let mut response = self.response.take().expect("Response does not exist");
+                    response.body.push(Chunk(Vec::from(body.as_ref())));
+                    self.response = Some(response);
+
+                    self.state = ResponseState::Complete;
+
+                    return Ok(self.response.take())
+                }
+                ResponseState::ChunkedBody => {
+                    // TODO support chunked Trailer headers
+                    let (consumed, size) = match chunk_header(buf.bytes()) {
+                        IResult::Done(remaining, size) => {
+
+                            let consumed = buf.len() - remaining.len();
+                            (consumed, size)
+                        }
+                        IResult::Incomplete(n) => {
+                            debug!("Incomplete parse attempt on chunk header. Needed {:?} more bytes", n);
+                            return Ok(None);
+                        }
+                        IResult::Error(e) => {
+                            error!("Error parsing chunk header: {:?}", e);
+                            return Err(Error::Invalid);
+                        }
+                    };
+
+                    buf.drain_to(consumed);
+
+                    if size > 0 {
+                        let body = buf.drain_to(size);
+
+                        let mut response = self.response.take().expect("Response does not exist");
+                        response.body.push(Chunk(Vec::from(body.as_ref())));
+                        self.response = Some(response);
+                    }
+
+                    let consumed = match crlf(buf.bytes()) {
+                        IResult::Done(remaining, _) => {
+                            buf.len() - remaining.len()
+                        }
+                        IResult::Incomplete(n) => {
+                            debug!("Incomplete parse attempt on crlf for chunked transfer termination. Needed {:?} more bytes", n);
+                            return Ok(None);
+                        }
+                        IResult::Error(e) => {
+                            error!("Error parsing crlf chunked transfer termination: {:?}", e);
+                            return Err(Error::Invalid);
+                        }
+                    };
+
+                    buf.drain_to(consumed);
+
+                    if size == 0 {
+                        self.state = ResponseState::Complete;
+                        return Ok(self.response.take())
                     }
                 }
-                _ => panic!("did not parse headers"),
+                ResponseState::Complete => {
+                    panic!("Tried to parse a completed request");
+                }
             }
         }
-        _ => panic!("did not parse request"),
     }
 }
 
@@ -75,18 +189,17 @@ named!(request_head<RequestHead>,
            sp ~
            version: http_version ~
            crlf, || {
-               let _version = version;
                RequestHead {
                    method: String::from_utf8_lossy(&method[..]).into_owned(),
                    uri: String::from_utf8_lossy(&uri[..]).into_owned(),
-                   version: String::from("11"), // TODO fix this
+                   version: version,
                    headers: Vec::new(),
                }
            }
            )
       );
 
-named!(response_head<ResponseHead>,
+named!(status_line<ResponseHead>,
        chain!(
            version: http_version ~
            sp           ~
@@ -94,11 +207,10 @@ named!(response_head<ResponseHead>,
            sp           ~
            reason:  status_token ~
            crlf, || {
-               let _version = version;
                let status = str::from_utf8(&status[..]).expect("Failed to read status bytes");
                let status = status.parse::<u16>().expect("Failed to parse status");
                ResponseHead {
-                   version: String::from("11"), // TODO fix this
+                   version: version,
                    status: status,
                    reason: String::from_utf8_lossy(&reason[..]).into_owned(),
                    headers: Vec::new(),
@@ -122,18 +234,41 @@ named!(parse_message_header<Header>,
            )
       );
 
-named!(parse_headers< Vec<Header> >, terminated!(many0!(parse_message_header), opt!(crlf)));
+named!(parse_headers< Vec<Header> >, terminated!(many0!(parse_message_header), crlf));
 
-named!(http_version<[&[u8];2]>,
-       chain!(
-           tag!("HTTP/") ~
-           major: digit ~
-           tag!(".") ~
-           minor: digit, || {
-               [major, minor] // ToDo do we need it?
-           }
-           )
-      );
+named!(http_version<Version>,
+    chain!(
+        tag!("HTTP/") ~
+        version: alt!(
+            tag!("0.9") => {|_| Version::Http09} |
+            tag!("1.0") => {|_| Version::Http10} |
+            tag!("1.1") => {|_| Version::Http11}
+        ) ,
+        || {
+            version
+        }
+    )
+);
+
+named!(hex_string<&str>,
+    map_res!(
+        take_while!(is_hex_digit),
+        ::std::str::from_utf8
+    )
+);
+
+pub fn chunk_size(input: &[u8]) -> IResult<&[u8], usize> {
+    let (i, s) = try_parse!(input, hex_string);
+    if i.len() == 0 {
+        return IResult::Incomplete(Needed::Unknown);
+    }
+    match usize::from_str_radix(s, 16) {
+        Ok(sz) => IResult::Done(i, sz),
+        Err(_) => IResult::Error(::nom::Err::Code(::nom::ErrorKind::MapRes))
+    }
+}
+
+named!(chunk_header<usize>, terminated!(chunk_size, crlf));
 
 // Primitives
 fn is_token_char(i: u8) -> bool {
@@ -163,10 +298,51 @@ fn is_header_value_char(i: u8) -> bool {
 
 named!(vchar_1, take_while!(is_vchar));
 
+fn is_hex_digit(chr: u8) -> bool {
+  (chr >= 0x30 && chr <= 0x39) || // 0-9
+  (chr >= 0x41 && chr <= 0x46) || // A-F
+  (chr >= 0x61 && chr <= 0x66)    // a-f
+}
+
+
+//
+// Internal parser tests that are not part of the public interface
+//
+#[cfg(test)]
+#[test]
+fn test_http_version() {
+    let tests = vec![
+        ("HTTP/0.9", Version::Http09),
+        ("HTTP/1.0", Version::Http10),
+        ("HTTP/1.1", Version::Http11),
+    ];
+
+    for (given, expected) in tests {
+        assert_eq!(IResult::Done(&b""[..], expected), http_version(given.as_bytes()));
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn test_chunk_header() {
+    let tests = vec![
+        ("7\r\n", 7),
+        ("0\r\n", 0),
+        ("4f\r\n", 79),
+        ("4F\r\n", 79),
+    ];
+
+    for (given, expected) in tests {
+        assert_eq!(IResult::Done(&b""[..], expected), chunk_header(given.as_bytes()));
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use bytes::{Buf, ByteBuf};
+
     use super::*;
-    use http::{RequestHead, Header};
+    use http::{RequestHead, Response, ResponseHead, Header, Version, Error, Chunk};
 
     #[test]
     fn test_request_get() {
@@ -182,7 +358,7 @@ mod tests {
         let expected = RequestHead {
             method: String::from("GET"),
             uri: String::from("/index.html"),
-            version: String::from("11"),
+            version: Version::Http11,
             headers: vec![
                 Header{
                     name: String::from("Host"),
@@ -214,11 +390,13 @@ mod tests {
 			  \r\n\
 			  Hello World";
 
-        let head = parse_response(&input[..]);
+        let mut parser = ResponseParser::new();
+        let mut input = ByteBuf::from_slice(&input[..]);
+        let given = parser.parse_response(&mut input);
 
         let expected = Response {
             head: ResponseHead {
-                version: String::from("11"),
+                version: Version::Http11,
                 status: 200,
                 reason: String::from("OK"),
                 headers: vec![
@@ -244,9 +422,174 @@ mod tests {
                     },
                 ],
             },
-            body: Vec::from("Hello World".as_bytes())
+            body: vec![Chunk(Vec::from("Hello World".as_bytes()))]
         };
 
-        assert_eq!(expected, head);
+        assert_eq!(expected, given.unwrap().unwrap());
+    }
+
+    #[test]
+    fn test_response_ok_extra() {
+        let input =
+			b"HTTP/1.1 200 OK\r\n\
+			  Content-Type: text/html; charset=UTF-8\r\n\
+			  Content-Length: 11\r\n\
+			  Cache-Control: public, max-age=600\r\n\
+			  Date: Tue, 08 Nov 2016 19:11:27 GMT\r\n\
+			  Connection: keep-alive\r\n\
+			  \r\n\
+			  Hello WorldHTTP/1.1 200 OK";
+
+        let mut parser = ResponseParser::new();
+        let mut input = ByteBuf::from_slice(&input[..]);
+        let given = parser.parse_response(&mut input);
+
+        let expected = Response {
+            head: ResponseHead {
+                version: Version::Http11,
+                status: 200,
+                reason: String::from("OK"),
+                headers: vec![
+                    Header{
+                        name: String::from("Content-Type"),
+                        value: String::from("text/html; charset=UTF-8"),
+                    },
+                    Header{
+                        name: String::from("Content-Length"),
+                        value: String::from("11"),
+                    },
+                    Header{
+                        name: String::from("Cache-Control"),
+                        value: String::from("public, max-age=600"),
+                    },
+                    Header{
+                        name: String::from("Date"),
+                        value: String::from("Tue, 08 Nov 2016 19:11:27 GMT"),
+                    },
+                    Header{
+                        name: String::from("Connection"),
+                        value: String::from("keep-alive"),
+                    },
+                ],
+            },
+            body: vec![Chunk(Vec::from("Hello World".as_bytes()))]
+        };
+
+        assert_eq!(expected, given.unwrap().unwrap());
+
+        assert_eq!("HTTP/1.1 200 OK".as_bytes(), input.bytes());
+    }
+
+    #[test]
+    fn test_response_partial_head() {
+        let input =
+			b"HTTP/1.1 200 OK\r\n\
+			  Content-Type: text/html; charset=UTF-8\r\n\
+			  Content-Length: 11\r\n\
+			  Cache-Control: public, max-age=600\r\n\
+			  Date: Tue, 08 Nov 2016 19:11:27 GMT\r\n\
+			  Connection: keep-alive\r\n";
+
+        let mut parser = ResponseParser::new();
+        let mut input = ByteBuf::from_slice(&input[..]);
+        let given = parser.parse_response(&mut input);
+
+        assert_eq!(None, given.unwrap());
+    }
+
+    #[test]
+    fn test_response_partial_body() {
+        let input =
+			b"HTTP/1.1 200 OK\r\n\
+			  Content-Type: text/html; charset=UTF-8\r\n\
+			  Content-Length: 11\r\n\
+			  Cache-Control: public, max-age=600\r\n\
+			  Date: Tue, 08 Nov 2016 19:11:27 GMT\r\n\
+			  Connection: keep-alive\r\n\
+			  \r\n\
+			  Hell";
+
+        let mut parser = ResponseParser::new();
+        let mut input = ByteBuf::from_slice(&input[..]);
+        let given = parser.parse_response(&mut input);
+
+        assert_eq!(None, given.unwrap());
+    }
+
+    #[test]
+    fn test_response_invalid() {
+        let input =
+			b"junk";
+
+        let mut parser = ResponseParser::new();
+        let mut input = ByteBuf::from_slice(&input[..]);
+        let given = parser.parse_response(&mut input);
+
+        match given.unwrap_err() {
+            Error::Invalid => {},
+            _ => { panic!("Expected Error::Invalid") }
+        }
+
+        // TODO determine why malformed headers are not causing error
+        // content length header is malformed
+        //let input =
+		//	b"HTTP/1.1 200 OK\r\n\
+		//	  Content-Type: text/html; charset=UTF-8\r\n\
+		//	  Content-Length:\r\n\
+		//	  Cache-Control: public, max-age=600\r\n";
+
+        //let given = parse_response(&input[..]);
+        //println!("given = {:?}", given);
+
+        //match given.unwrap_err() {
+        //    Error::Invalid => {},
+        //    _ => { panic!("Expected Error::Invalid") }
+        //}
+    }
+
+    #[test]
+    fn test_response_chunked() {
+        let input =
+            b"HTTP/1.1 200 OK\r\n\
+              Content-Type: text/plain\r\n\
+              Transfer-Encoding: chunked\r\n\
+              \r\n\
+              7\r\n\
+              Mozilla\r\n\
+              9\r\n\
+              Developer\r\n\
+              7\r\n\
+              Network\r\n\
+              0\r\n\
+              \r\n";
+
+        let mut parser = ResponseParser::new();
+        let mut input = ByteBuf::from_slice(&input[..]);
+        let given = parser.parse_response(&mut input);
+
+        let expected = Response {
+            head: ResponseHead {
+                version: Version::Http11,
+                status: 200,
+                reason: String::from("OK"),
+                headers: vec![
+                    Header{
+                        name: String::from("Content-Type"),
+                        value: String::from("text/plain"),
+                    },
+                    Header{
+                        name: String::from("Transfer-Encoding"),
+                        value: String::from("chunked"),
+                    },
+                ],
+            },
+            body: vec![
+                Chunk(Vec::from("Mozilla".as_bytes())),
+                Chunk(Vec::from("Developer".as_bytes())),
+                Chunk(Vec::from("Network".as_bytes())),
+            ]
+        };
+
+        assert_eq!(expected, given.unwrap().unwrap());
     }
 }
