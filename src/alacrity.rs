@@ -18,7 +18,7 @@ fn main() {
     let backend = backend.parse::<SocketAddr>().unwrap();
     let pool = Pool::with_servers(vec![backend]);
 
-    let admin_ip = env::args().nth(2).unwrap_or("127.0.0.1:8687".to_string());
+    let admin_ip = env::args().nth(3).unwrap_or("127.0.0.1:8687".to_string());
     let admin_addr = admin_ip.parse::<SocketAddr>().unwrap();
     let p = pool.clone();
     let _ = thread::Builder::new().name("management".to_string()).spawn(move || {
