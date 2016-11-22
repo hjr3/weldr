@@ -4,7 +4,7 @@ use bytes::{Buf, ByteBuf};
 use nom::{IResult, Needed};
 use nom::is_alphanumeric;
 
-use http::{RequestHead, Header, Response, ResponseHead, Version, Error, Chunk};
+use http::{Request, RequestHead, Header, Response, ResponseHead, Version, Error, Chunk};
 
 pub fn parse_request_head(buf: &[u8]) -> RequestHead {
     match request_head(buf) {
@@ -21,6 +21,111 @@ pub fn parse_request_head(buf: &[u8]) -> RequestHead {
         _ => panic!("did not parse request"),
     }
 }
+
+#[derive(Debug, Clone, Copy)]
+enum RequestState {
+    RequestLine,
+    Headers,
+    Body(usize),
+    Complete,
+}
+
+pub struct RequestParser {
+    state: RequestState,
+    request: Option<Request>,
+}
+
+impl RequestParser {
+
+    pub fn new() -> RequestParser {
+        RequestParser {
+            state: RequestState::RequestLine,
+            request: None,
+        }
+    }
+
+    /// Parse a request byte stream into a native object
+    pub fn parse_request(&mut self, buf: &mut ByteBuf) -> Result<Option<Request>, Error> {
+        loop {
+            match self.state {
+                RequestState::RequestLine => {
+                    let consumed = match request_head(buf.bytes()) {
+                        IResult::Done(remaining, request_head) => {
+                            self.request = Some(Request {
+                                head: request_head,
+                                body: Vec::new(),
+                            });
+                            self.state = RequestState::Headers;
+
+                            buf.len() - remaining.len()
+                        }
+                        IResult::Incomplete(n) => {
+                            debug!("Incomplete parse attempt on frame. Needed {:?} more bytes", n);
+                            return Ok(None);
+                        }
+                        IResult::Error(e) => {
+                            error!("Error parsing request-line: {:?}", e);
+                            return Err(Error::Invalid);
+                        }
+                    };
+
+                    buf.drain_to(consumed);
+                }
+                RequestState::Headers => {
+                    let consumed = match parse_headers(buf.bytes()) {
+                        IResult::Done(remaining, mut headers) => {
+                            let mut request = self.request.take().expect("Request does not exist");
+                            request.head.headers.append(&mut headers);
+
+                            // TODO: handle chunked request body if the request has a Transfer-Encoding header
+                            if let Some(content_length) = request.head.content_length() {
+                                self.state = RequestState::Body(content_length);
+                            } else {
+                                // no body
+                                self.request = Some(request);
+                                self.state = RequestState::Complete;
+                                return Ok(self.request.take())
+                            }
+
+                            self.request = Some(request);
+                            buf.len() - remaining.len()
+                        }
+                        IResult::Incomplete(n) => {
+                            debug!("Incomplete parse attempt on frame. Needed {:?} more bytes", n);
+                            return Ok(None);
+                        }
+                        IResult::Error(e) => {
+                            error!("Error parsing request headers: {:?}", e);
+                            return Err(Error::Invalid);
+                        }
+                    };
+
+                    buf.drain_to(consumed);
+                }
+                RequestState::Body(content_length) => {
+                    // buffer does not contain enough bytes to finish parsing the body,
+                    // so return incomplete
+                    if buf.len() < content_length {
+                        return Ok(None);
+                    }
+                    let body = buf.drain_to(content_length);
+
+                    let mut request = self.request.take().expect("Request does not exist");
+                    request.body.push(Chunk(Vec::from(body.as_ref())));
+                    self.request = Some(request);
+
+                    self.state = RequestState::Complete;
+                    return Ok(self.request.take())
+                }
+                RequestState::Complete => {
+                    panic!("Tried to parse a completed request");
+                }
+            }
+        }
+    }
+}
+
+
 
 #[derive(Debug, Clone, Copy)]
 enum ResponseState {
@@ -342,7 +447,7 @@ mod tests {
     use bytes::{Buf, ByteBuf};
 
     use super::*;
-    use http::{RequestHead, Response, ResponseHead, Header, Version, Error, Chunk};
+    use http::{Request, RequestHead, Response, ResponseHead, Header, Version, Error, Chunk};
 
     #[test]
     fn test_request_get() {
@@ -353,29 +458,100 @@ mod tests {
               Accept: */*\r\n\
               \r\n";
 
-        let head = parse_request_head(&input[..]);
+        let mut parser = RequestParser::new();
+        let mut input = ByteBuf::from_slice(&input[..]);
+        let given = parser.parse_request(&mut input);
 
-        let expected = RequestHead {
-            method: String::from("GET"),
-            uri: String::from("/index.html"),
-            version: Version::Http11,
-            headers: vec![
-                Header{
-                    name: String::from("Host"),
-                    value: String::from("www.example.com"),
-                },
-                Header{
-                    name: String::from("User-Agent"),
-                    value: String::from("curl/7.43.0"),
-                },
-                Header{
-                    name: String::from("Accept"),
-                    value: String::from("*/*"),
-                },
-            ],
+        let expected = Request {
+            head: RequestHead {
+                method: String::from("GET"),
+                uri: String::from("/index.html"),
+                version: Version::Http11,
+                headers: vec![
+                    Header{
+                        name: String::from("Host"),
+                        value: String::from("www.example.com"),
+                    },
+                    Header{
+                        name: String::from("User-Agent"),
+                        value: String::from("curl/7.43.0"),
+                    },
+                    Header{
+                        name: String::from("Accept"),
+                        value: String::from("*/*"),
+                    },
+                ],
+            },
+            body: Vec::new(),
         };
 
-        assert_eq!(expected, head);
+        assert_eq!(expected, given.unwrap().unwrap());
+    }
+
+    #[test]
+    fn test_request_post() {
+        let input =
+            b"POST /index.html HTTP/1.1\r\n\
+              Host: www.example.com\r\n\
+              Content-Length: 5\r\n\
+              \r\n\
+              hello";
+
+        let mut parser = RequestParser::new();
+        let mut input = ByteBuf::from_slice(&input[..]);
+        let given = parser.parse_request(&mut input);
+
+        let expected = Request {
+            head: RequestHead {
+                method: String::from("POST"),
+                uri: String::from("/index.html"),
+                version: Version::Http11,
+                headers: vec![
+                    Header{
+                        name: String::from("Host"),
+                        value: String::from("www.example.com"),
+                    },
+                    Header{
+                        name: String::from("Content-Length"),
+                        value: String::from("5"),
+                    },
+                ],
+            },
+            body: vec![Chunk(Vec::from("hello".as_bytes()))],
+        };
+
+        assert_eq!(expected, given.unwrap().unwrap());
+    }
+
+    #[test]
+    fn test_request_partial_head() {
+        let input =
+            b"GET /index.html HTTP/1.1\r\n\
+              Host: www.example.com\r\n\
+              User-Agent: curl/7.43.0\r\n\
+              Accept: */*\r\n";
+
+        let mut parser = RequestParser::new();
+        let mut input = ByteBuf::from_slice(&input[..]);
+        let given = parser.parse_request(&mut input);
+
+        assert_eq!(None, given.unwrap());
+    }
+
+    #[test]
+    fn test_request_partial_body() {
+        let input =
+            b"POST /index.html HTTP/1.1\r\n\
+              Host: www.example.com\r\n\
+              Content-Length: 5\r\n\
+              \r\n\
+              hell";
+
+        let mut parser = RequestParser::new();
+        let mut input = ByteBuf::from_slice(&input[..]);
+        let given = parser.parse_request(&mut input);
+
+        assert_eq!(None, given.unwrap());
     }
 
     #[test]

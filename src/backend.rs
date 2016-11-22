@@ -49,7 +49,7 @@ pub struct HttpSerializer {}
 
 impl Serialize for HttpSerializer {
 
-    type In = Frame<http::RequestHead, http::Chunk, http::Error>;
+    type In = Frame<http::Request, http::Chunk, http::Error>;
 
     /// Serializes a frame into the buffer provided.
     ///
@@ -61,27 +61,31 @@ impl Serialize for HttpSerializer {
 
         match msg {
             Frame::Message { message, body: _ } => {
-                let input = format!(
-                    "{} {} HTTP/1.1\r\n\
-                     Host: www.example.com\r\n\
-                     Accept: */*\r\n\
-                     \r\n",
-                    message.method, message.uri);
+                let request = message;
+                let head = format!("{}", request.head);
+                trace!("Computed message to send to backend:\r\n{}", head);
 
-                trace!("Computed message to send to backend: {}", input);
-                trace!("Trying to write {} bytes", input.len());
-                buf.copy_from_slice(input.as_bytes());
-                trace!("Copied {} bytes", input.len());
-            },
-            Frame::Body { chunk} => {
-                error!("Serializing body is not implemented: {:?}", chunk);
-                ()
-            },
-            Frame::Error { error } => {
-                error!("Dealing with error is not implemented: {:?}", error);
-                ()
-            },
-            Frame::Done => (),
+                let head = head.into_bytes();
+                trace!("Trying to write {} bytes from request head", head.len());
+                buf.copy_from_slice(&head[..]);
+                trace!("Copied {} bytes from request head", head.len());
+
+                if !request.body.is_empty() {
+                    match request.head.content_length() {
+                        Some(_) => {
+                            if let Some(chunk) = request.body.first() {
+                                trace!("Trying to write {} bytes from request chunk", chunk.0.len());
+                                buf.copy_from_slice(&chunk.0[..]);
+                                trace!("Copied {} bytes from request chunk", chunk.0.len());
+                            }
+                        }
+                        None => {
+                            panic!("Transfer encoding chunked not implemented for request body");
+                        }
+                    }
+                }
+            }
+            _ => unimplemented!(),
         }
     }
 }

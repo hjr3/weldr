@@ -20,7 +20,7 @@ pub struct Proxy {
 }
 
 impl Service for Proxy {
-    type Request = Message<http::RequestHead, Body<http::Chunk, http::Error>>;
+    type Request = Message<http::Request, Body<http::Chunk, http::Error>>;
     type Response = Message<http::Response, Body<http::Chunk, http::Error>>;
     type Error = http::Error;
     type Future = Box<Future<Item=Self::Response, Error=Self::Error> + Send + 'static>;
