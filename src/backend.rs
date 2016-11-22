@@ -3,8 +3,7 @@ use std::io;
 use futures::{Poll, Async};
 use tokio_proto::pipeline::Frame;
 
-use bytes::{Buf, BufMut};
-use bytes::ByteBuf;
+use bytes::{ByteBuf, BufMut};
 
 use http;
 
@@ -26,11 +25,14 @@ impl Parse for HttpParser {
 
         trace!("Attempting to parse bytes into HTTP Request");
 
-        let response = http::Response(Vec::from(buf.bytes()));
+        let mut parser = http::parser::ResponseParser::new();
+        let response = match parser.parse_response(buf) {
+            Ok(Some(response)) => response,
+            Ok(None) => panic!("Not enough bytes to parse response"),
+            Err(e) => panic!("Error parsing response: {:?}", e),
+        };
 
         debug!("Parser created: {:?}", response);
-
-        buf.clear();
 
         return Ok(
             Async::Ready(
