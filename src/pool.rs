@@ -28,6 +28,11 @@ impl Pool {
         self.inner.write().expect("Lock is poisoned").get()
     }
 
+    /// Returns all `SocketAddr` from the pool
+    pub fn all(&self) -> Vec<SocketAddr> {
+        self.inner.write().expect("Lock is poisoned").all()
+    }
+
     /// Add a new socket (IP address and port) to the pool
     ///
     /// Currently, it is possible to add the same socket more then once
@@ -72,6 +77,14 @@ pub mod inner {
             })
         }
 
+        pub fn all(&mut self) -> Vec<SocketAddr> {
+            if self.backends.is_empty() {
+                warn!("Pool is exhausted of socket addresses");
+                return Vec::new();
+            }
+            self.backends.clone()
+        }
+
         pub fn add(&mut self, backend: SocketAddr) {
             self.backends.push(backend);
         }
@@ -113,34 +126,41 @@ pub mod inner {
             let mut rrb = Pool::new(backends);
             assert_eq!(0, rrb.backends.len());
             assert!(rrb.get().is_none());
+            assert!(rrb.all().is_empty());
         }
 
         #[test]
         fn test_add_to_rrb_backend() {
             let mut rrb = Pool::new(vec![]);
             assert!(rrb.get().is_none());
-            rrb.add(FromStr::from_str("127.0.0.1:6000").unwrap());
+            let addr: SocketAddr = FromStr::from_str("127.0.0.1:6000").unwrap();
+            rrb.add(addr);
             assert!(rrb.get().is_some());
+            assert_eq!(vec![addr], rrb.all());
         }
 
         #[test]
         fn test_remove_from_rrb_backend() {
             let mut rrb = Pool::new(vec![]);
-            rrb.add(FromStr::from_str("127.0.0.1:6000").unwrap());
-            rrb.add(FromStr::from_str("127.0.0.1:6001").unwrap());
+            let addr1: SocketAddr = FromStr::from_str("127.0.0.1:6000").unwrap();
+            let addr2: SocketAddr = FromStr::from_str("127.0.0.1:6001").unwrap();
+            rrb.add(addr1);
+            rrb.add(addr2);
             assert_eq!(2, rrb.backends.len());
+            assert_eq!(vec![addr1, addr2], rrb.all());
 
             let unknown_addr = FromStr::from_str("127.0.0.1:1234").unwrap();
             rrb.remove(&unknown_addr);
             assert_eq!(2, rrb.backends.len());
+            assert_eq!(vec![addr1, addr2], rrb.all());
 
-            let addr1 = FromStr::from_str("127.0.0.1:6000").unwrap();
             rrb.remove(&addr1);
             assert_eq!(1, rrb.backends.len());
+            assert_eq!(vec![addr2], rrb.all());
 
-            let addr2 = FromStr::from_str("127.0.0.1:6001").unwrap();
             rrb.remove(&addr2);
             assert_eq!(0, rrb.backends.len());
+            assert!(rrb.all().is_empty());
         }
     }
 }
