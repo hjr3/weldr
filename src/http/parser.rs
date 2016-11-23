@@ -216,6 +216,8 @@ impl ResponseParser {
                     // buffer does not contain enough bytes to finish parsing the body,
                     // so return incomplete
                     if buf.len() < content_length {
+                        debug!("Body contains {:?} bytes and we need {:?} bytes", buf.len(), content_length);
+                        trace!("response till now: {:?}", &self.response);
                         return Ok(None);
                     }
 
