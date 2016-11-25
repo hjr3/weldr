@@ -287,73 +287,113 @@ impl ResponseParser {
 }
 
 named!(request_head<RequestHead>,
-       chain!(
-           method: token ~
-           sp ~
-           uri: vchar_1 ~ // ToDo proper URI parsing?
-           sp ~
-           version: http_version ~
-           crlf, || {
-               RequestHead {
-                   method: String::from_utf8_lossy(&method[..]).into_owned(),
-                   uri: String::from_utf8_lossy(&uri[..]).into_owned(),
-                   version: version,
-                   headers: Vec::new(),
-               }
-           }
-           )
-      );
+    do_parse!(
+        method: token >>
+        sp >>
+        uri: vchar_1 >> // ToDo proper URI parsing?
+        sp >>
+        version: http_version >>
+        crlf >>
+        (
+            RequestHead {
+                method: String::from_utf8_lossy(&method[..]).into_owned(),
+                uri: String::from_utf8_lossy(&uri[..]).into_owned(),
+                version: version,
+                headers: Vec::new(),
+            }
+        )
+    )
+);
 
 named!(status_line<ResponseHead>,
-       chain!(
-           version: http_version ~
-           sp           ~
-           status:  take!(3)     ~
-           sp           ~
-           reason:  status_token ~
-           crlf, || {
-               let status = str::from_utf8(&status[..]).expect("Failed to read status bytes");
-               let status = status.parse::<u16>().expect("Failed to parse status");
-               ResponseHead {
-                   version: version,
-                   status: status,
-                   reason: String::from_utf8_lossy(&reason[..]).into_owned(),
-                   headers: Vec::new(),
-               }
-           }
-           )
-      );
+    do_parse!(
+        version: http_version >>
+        sp >>
+        status: map_res!(
+            take!(3),
+            str::from_utf8
+            ) >>
+        sp >>
+        reason: status_token >>
+        crlf >>
+        (
+            ResponseHead {
+                version: version,
+                status: status.parse::<u16>().expect("Failed to parse status"),
+                reason: String::from_utf8_lossy(&reason[..]).into_owned(),
+                headers: Vec::new(),
+            }
+        )
+    )
+);
 
 named!(parse_message_header<Header>,
-       chain!(
-           name: token ~
-           tag!(":") ~
-           many0!(lws) ~ // per RFC 2616 "The field value MAY be preceded by any amount of LWS"
-           value: take_while!(is_header_value_char) ~ // ToDo handle folding?
-           crlf, || {
-               Header {
-                   name: String::from_utf8_lossy(name).into_owned(),
-                   value: String::from_utf8_lossy(value).into_owned(),
-               }
-           }
-           )
-      );
+    do_parse!(
+        name: token >>
+        tag!(":") >>
+        many0!(lws) >> // per RFC 2616 "The field value MAY be preceded by any amount of LWS"
+        value: take_while!(is_header_value_char) >> // ToDo handle folding?
+        crlf >>
+        (
+            Header {
+                name: String::from_utf8_lossy(name).into_owned(),
+                value: String::from_utf8_lossy(value).into_owned(),
+            }
+        )
+    )
+);
 
 named!(parse_headers< Vec<Header> >, terminated!(many0!(parse_message_header), crlf));
 
 named!(http_version<Version>,
-    chain!(
-        tag!("HTTP/") ~
+    do_parse!(
+        tag!("HTTP/") >>
         version: alt!(
             tag!("0.9") => {|_| Version::Http09} |
             tag!("1.0") => {|_| Version::Http10} |
             tag!("1.1") => {|_| Version::Http11}
-        ) ,
-        || {
-            version
-        }
+        ) >>
+        (version)
     )
 );
+
+pub struct BodyParser {
+    /// Number of remaining bytes to parse
+    remaining: usize,
+}
+
+/// Progressive body parser
+///
+/// This parser will keep track of how many remaining bytes there are to extract
+impl BodyParser {
+    pub fn new(remaining: usize) -> BodyParser {
+        BodyParser {
+            remaining: remaining
+        }
+    }
+
+    /// Parse the contents of a HTTP body into a chunk
+    ///
+    /// This function will attempt to make as much progress as possible. A
+    /// value of `None` indicates that the body has been completely extracted
+    /// from the buffer.
+    pub fn parse(&mut self, buf: &mut ByteBuf) -> Result<Option<Chunk>, Error> {
+        if self.remaining == 0 {
+            return Ok(None);
+        }
+
+        if buf.len() == 0 {
+            // TODO make this a better error
+            return Err(Error::Invalid);
+        }
+
+        let length = ::std::cmp::min(buf.len(), self.remaining);
+
+        let body = buf.drain_to(length);
+        self.remaining -= length;
+        Ok(Some(Chunk(Vec::from(body.as_ref()))))
+    }
+}
 
 named!(hex_string<&str>,
     map_res!(
@@ -369,7 +409,7 @@ pub fn chunk_size(input: &[u8]) -> IResult<&[u8], usize> {
     }
     match usize::from_str_radix(s, 16) {
         Ok(sz) => IResult::Done(i, sz),
-        Err(_) => IResult::Error(::nom::Err::Code(::nom::ErrorKind::MapRes))
+        Err(_) => IResult::Error(::nom::ErrorKind::MapRes)
     }
 }
 
@@ -767,5 +807,19 @@ mod tests {
         };
 
         assert_eq!(expected, given.unwrap().unwrap());
+    }
+
+    #[test]
+    fn test_parse_body() {
+        let input = b"Hello world";
+        let mut input = ByteBuf::from_slice(&input[..]);
+
+        let mut bp = BodyParser::new(input.len());
+        let given = bp.parse(&mut input);
+        assert_eq!(Chunk(Vec::from("Hello world".as_bytes())), given.unwrap().unwrap());
+
+        let given = bp.parse(&mut input);
+        assert_eq!(None, given.unwrap());
+
     }
 }
