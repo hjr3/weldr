@@ -69,7 +69,7 @@ impl Parse for HttpParser {
             }
         }
 
-        trace!("Attempting to parse bytes into HTTP Response");
+        trace!("Attempting to parse {:?} into HTTP Response", buf);
 
         let response = match self.parser.parse_response(buf) {
             Ok(Some(response)) => response,

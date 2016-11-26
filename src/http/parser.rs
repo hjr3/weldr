@@ -230,21 +230,16 @@ impl ResponseParser {
                     buf.drain_to(consumed);
                 }
                 ResponseState::Body(content_length) => {
-                    // buffer does not contain enough bytes to finish parsing the body,
-                    // so return incomplete
-                    if buf.len() < content_length {
-                        return Ok(None);
+                    self.remaining_body = content_length;
+                    match self.parse_body(buf) {
+                        Ok(Some(body)) => {
+                            let mut response = self.response.take().expect("Response does not exist");
+                            response.body.push(body);
+                            return Ok(Some(response));
+                        }
+                        Ok(None) => return Ok(self.response.take()),
+                        Err(e) => return Err(e),
                     }
-
-                    let body = buf.drain_to(content_length);
-
-                    let mut response = self.response.take().expect("Response does not exist");
-                    response.body.push(Chunk(Vec::from(body.as_ref())));
-                    self.response = Some(response);
-
-                    self.state = ResponseState::Complete;
-
-                    return Ok(self.response.take())
                 }
                 ResponseState::ChunkedBody => {
                     // TODO support chunked Trailer headers
