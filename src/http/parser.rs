@@ -371,7 +371,7 @@ pub fn chunk_size(input: &[u8]) -> IResult<&[u8], usize> {
     }
     match usize::from_str_radix(s, 16) {
         Ok(sz) => IResult::Done(i, sz),
-        Err(_) => IResult::Error(::nom::Err::Code(::nom::ErrorKind::MapRes))
+        Err(_) => IResult::Error(::nom::ErrorKind::MapRes)
     }
 }
 
