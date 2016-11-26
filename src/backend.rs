@@ -9,7 +9,17 @@ use http;
 
 use framed::{Parse, Serialize};
 
-pub struct HttpParser {}
+pub struct HttpParser {
+    parser: http::parser::ResponseParser,
+}
+
+impl HttpParser {
+    pub fn new() -> HttpParser {
+        HttpParser {
+            parser: http::parser::ResponseParser::new(),
+        }
+    }
+}
 
 impl Parse for HttpParser {
     type Out = Frame<http::Response, http::Chunk, http::Error>;
@@ -23,13 +33,59 @@ impl Parse for HttpParser {
             );
         }
 
-        trace!("Attempting to parse bytes into HTTP Request");
+        if self.parser.is_streaming() {
+            trace!("Extracting bytes from streaming response body");
+            return match self.parser.parse_body(buf) {
+                Ok(Some(body)) =>  {
+                    Ok(
+                        Async::Ready(
+                            Frame::Body {
+                                chunk: Some(body),
+                            }
+                        )
+                    )
+                }
+                Ok(None) => {
+                    debug!("No bytes in response");
 
-        let mut parser = http::parser::ResponseParser::new();
-        let response = match parser.parse_response(buf) {
+                    Ok(
+                        Async::Ready(
+                            Frame::Body {
+                                chunk: None,
+                            }
+                        )
+                    )
+                },
+                Err(e) => {
+                    error!("Tried to parse out body when the buffer was empty");
+                    Ok(
+                        Async::Ready(
+                            Frame::Error {
+                                error: e,
+                            }
+                        )
+                    )
+                }
+            }
+        }
+
+        trace!("Attempting to parse bytes into HTTP Response");
+
+        let response = match self.parser.parse_response(buf) {
             Ok(Some(response)) => response,
-            Ok(None) => panic!("Not enough bytes to parse response"),
-            Err(e) => panic!("Error parsing response: {:?}", e),
+            Ok(None) => {
+                debug!("Not enough bytes to parse response");
+                return Ok(Async::NotReady);
+            },
+            Err(e) => {
+                return Ok(
+                    Async::Ready(
+                        Frame::Error {
+                            error: e,
+                        }
+                    )
+                );
+            }
         };
 
         debug!("Parser created: {:?}", response);
@@ -38,7 +94,7 @@ impl Parse for HttpParser {
             Async::Ready(
                 Frame::Message{
                     message: response,
-                    body: false,
+                    body: self.parser.is_streaming(),
                 }
             )
         );

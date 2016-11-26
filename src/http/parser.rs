@@ -139,6 +139,7 @@ enum ResponseState {
 pub struct ResponseParser {
     state: ResponseState,
     response: Option<Response>,
+    remaining_body: usize,
 }
 
 impl ResponseParser {
@@ -147,7 +148,23 @@ impl ResponseParser {
         ResponseParser {
             state: ResponseState::StatusLine,
             response: None,
+            remaining_body: 0,
         }
+    }
+
+    pub fn is_streaming(&self) -> bool {
+        self.remaining_body > 0
+    }
+
+    pub fn parse_body(&mut self, buf: &mut ByteBuf) -> Result<Option<Chunk>, Error> {
+        let (body, remaining) = match parse_body(buf, self.remaining_body) {
+            Ok(Some(b)) => b,
+            Ok(None) => return Ok(None),
+            Err(e) => return Err(e),
+        };
+
+        self.remaining_body = remaining;
+        Ok(Some(body))
     }
 
     /// Parse a response byte stream into a native object
@@ -357,42 +374,29 @@ named!(http_version<Version>,
     )
 );
 
-pub struct BodyParser {
-    /// Number of remaining bytes to parse
-    remaining: usize,
-}
-
-/// Progressive body parser
-///
-/// This parser will keep track of how many remaining bytes there are to extract
-impl BodyParser {
-    pub fn new(remaining: usize) -> BodyParser {
-        BodyParser {
-            remaining: remaining
-        }
+/// Parse the contents of a HTTP body into a chunk
+pub fn parse_body(buf: &mut ByteBuf, length: usize) -> Result<Option<(Chunk, usize)>, Error> {
+    if length == 0 {
+        return Ok(None);
     }
 
-    /// Parse the contents of a HTTP body into a chunk
-    ///
-    /// This function will attempt to make as much progress as possible. A
-    /// value of `None` indicates that the body has been completely extracted
-    /// from the buffer.
-    pub fn parse(&mut self, buf: &mut ByteBuf) -> Result<Option<Chunk>, Error> {
-        if self.remaining == 0 {
-            return Ok(None);
-        }
-
-        if buf.len() == 0 {
-            // TODO make this a better error
-            return Err(Error::Invalid);
-        }
-
-        let length = ::std::cmp::min(buf.len(), self.remaining);
-
-        let body = buf.drain_to(length);
-        self.remaining -= length;
-        Ok(Some(Chunk(Vec::from(body.as_ref()))))
+    if buf.len() == 0 {
+        // TODO make this a better error
+        return Err(Error::Invalid);
     }
+
+    let l= ::std::cmp::min(buf.len(), length);
+
+    let body = buf.drain_to(l);
+    let remaining = length - l;
+    Ok(
+        Some(
+            (
+                Chunk(Vec::from(body.as_ref())),
+                remaining
+            )
+        )
+    )
 }
 
 named!(hex_string<&str>,
@@ -814,11 +818,13 @@ mod tests {
         let input = b"Hello world";
         let mut input = ByteBuf::from_slice(&input[..]);
 
-        let mut bp = BodyParser::new(input.len());
-        let given = bp.parse(&mut input);
-        assert_eq!(Chunk(Vec::from("Hello world".as_bytes())), given.unwrap().unwrap());
+        let len = input.len();
+        let given = parse_body(&mut input, len);
+        let chunk = Chunk(Vec::from("Hello world".as_bytes()));
+        assert_eq!((chunk, 0), given.unwrap().unwrap());
 
-        let given = bp.parse(&mut input);
+        let len = input.len();
+        let given = parse_body(&mut input, len);
         assert_eq!(None, given.unwrap());
 
     }

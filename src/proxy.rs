@@ -34,7 +34,7 @@ impl Service for Proxy {
         // This is a future to a framed transport. The call to pipline::connect below expects a
         // future to a socket.
         let framed = TcpStream::connect(&addr, &self.handle.clone()).map(|sock| {
-            framed::ProxyFramed::new(sock, backend::HttpParser {}, backend::HttpSerializer {})
+            framed::ProxyFramed::new(sock, backend::HttpParser::new(), backend::HttpSerializer {})
         });
 
         let pipeline = pipeline::connect(framed, &self.handle.clone());
