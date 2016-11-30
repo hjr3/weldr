@@ -163,6 +163,7 @@ impl ResponseParser {
             Err(e) => return Err(e),
         };
 
+        debug!("Parsed body with {} bytes remaining", remaining);
         self.remaining_body = remaining;
         Ok(Some(body))
     }
@@ -380,7 +381,7 @@ pub fn parse_body(buf: &mut ByteBuf, length: usize) -> Result<Option<(Chunk, usi
         return Err(Error::Invalid);
     }
 
-    let l= ::std::cmp::min(buf.len(), length);
+    let l = ::std::cmp::min(buf.len(), length);
 
     let body = buf.drain_to(l);
     let remaining = length - l;

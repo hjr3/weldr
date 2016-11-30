@@ -26,6 +26,7 @@ impl Parse for HttpParser {
 
     fn parse(&mut self, buf: &mut ByteBuf) -> Poll<Self::Out, io::Error> {
         if buf.len() == 0 {
+            debug!("Buffer length is empty. Done?");
             return Ok(
                 Async::Ready(
                     Frame::Done
@@ -112,7 +113,7 @@ impl Serialize for HttpSerializer {
     /// This method will serialize `msg` into the byte buffer provided by `buf`.
     /// The `buf` provided is an internal buffer of the `ProxyFramed` instance and
     /// will be written out when possible.
-    fn serialize(&mut self, msg: Self::In, buf: &mut ByteBuf) {
+    fn serialize(&mut self, msg: Self::In, buf: &mut ByteBuf) -> bool {
         trace!("Serializing message frame: {:?}", msg);
 
         match msg {
@@ -140,6 +141,8 @@ impl Serialize for HttpSerializer {
                         }
                     }
                 }
+
+                false
             }
             _ => unimplemented!(),
         }

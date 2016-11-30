@@ -59,13 +59,13 @@ impl Serialize for HttpSerializer {
     /// This method will serialize `msg` into the byte buffer provided by `buf`.
     /// The `buf` provided is an internal buffer of the `ProxyFramed` instance and
     /// will be written out when possible.
-    fn serialize(&mut self, msg: Self::In, buf: &mut ByteBuf) {
+    fn serialize(&mut self, msg: Self::In, buf: &mut ByteBuf) -> bool {
         trace!("Serializing message frame: {:?}", msg);
 
         match msg {
             Frame::Message {
                 ref message,
-                body: _,
+                body,
             } => {
                 let response = message;
                 let head = format!("{}", response.head).into_bytes();
@@ -78,6 +78,7 @@ impl Serialize for HttpSerializer {
                     Some(_) => {
                         if let Some(chunk) = response.body.first() {
                             trace!("Trying to write {} bytes from response chunk", chunk.0.len());
+                            buf.reserve(chunk.0.len());
                             buf.copy_from_slice(&chunk.0[..]);
                             trace!("Copied {} bytes from response chunk", chunk.0.len());
                         }
@@ -86,6 +87,15 @@ impl Serialize for HttpSerializer {
                         panic!("Transfer encoding chunked not implemented");
                     }
                 }
+
+                body
+            }
+            Frame::Body { chunk } => {
+                if let Some(chunk) = chunk {
+                    buf.copy_from_slice(&chunk.0[..]);
+                }
+
+                true
             }
             Frame::Error { error } => {
                 error!("Upstream error: {:?}", error);
@@ -97,8 +107,11 @@ impl Serialize for HttpSerializer {
                 buf.copy_from_slice(&e[..]);
                 trace!("Copied {} bytes from response head", e.len());
 
+                false
             }
-            _ => unimplemented!(),
+            Frame::Done => {
+                false
+            }
         }
     }
 }

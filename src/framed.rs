@@ -80,7 +80,9 @@ pub trait Serialize {
     /// This method will serialize `msg` into the byte buffer provided by `buf`.
     /// The `buf` provided is an internal buffer of the `ProxyFramed` instance and
     /// will be written out when possible.
-    fn serialize(&mut self, msg: Self::In, buf: &mut ByteBuf);
+    ///
+    /// A return value of true means the message is streaming. False means the streaming is done.
+    fn serialize(&mut self, msg: Self::In, buf: &mut ByteBuf) -> bool;
 }
 
 pub struct ProxyFramed<T, P, S> {
@@ -163,19 +165,21 @@ impl<T, P, S> FramedIo for ProxyFramed<T, P, S>
 
     fn write(&mut self, msg: Self::In) -> Poll<(), io::Error> {
         //trace!("Writing to {}", self.upstream.peer_addr().unwrap());
+        //trace!("writing; remaining={:?}", self.wr.len());
+
+        //let bytes = try_ready!(self.upstream.try_write_buf(&mut self.wr));
+        //trace!("Wrote {} bytes", bytes);
+        //self.wr.clear();
+
+        // Apply backpessure if the buffer is full
+        if self.wr.capacity() - self.wr.len() == 0 {
+            debug!("Buffer is full, trying to flush");
+            try_ready!(self.flush());
+        }
 
         // Serialize the msg
-        self.serialize.serialize(msg, &mut self.wr);
+        self.is_writeable = self.serialize.serialize(msg, &mut self.wr);
 
-        trace!("writing; remaining={:?}", self.wr.len());
-
-        let bytes = try_ready!(self.upstream.try_write_buf(&mut self.wr));
-        trace!("Wrote {} bytes", bytes);
-        self.wr.clear();
-        self.is_writeable = false;
-
-        // TODO: should provide some backpressure, such as when the buffer is
-        //       too full this returns `NotReady` or something like that.
         Ok(Async::Ready(()))
     }
 
