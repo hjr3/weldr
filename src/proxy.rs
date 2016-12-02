@@ -5,8 +5,9 @@ use futures::{Future, Async};
 use futures::stream::Stream;
 use tokio_service::Service;
 use tokio_proto::{pipeline, Message, Body};
-use tokio_core::reactor::{Core, Handle};
+use tokio_core::reactor::Core;
 use tokio_core::net::{TcpStream, TcpListener};
+use tokio_proto::client::Client;
 
 use http;
 use framed;
@@ -15,8 +16,7 @@ use frontend;
 use pool::Pool;
 
 pub struct Proxy {
-    handle: Handle,
-    pool: Pool,
+    backend: Client<http::Request, http::Response, Body<http::Chunk, http::Error>, Body<http::Chunk, http::Error>, http::Error>
 }
 
 impl Service for Proxy {
@@ -26,19 +26,7 @@ impl Service for Proxy {
     type Future = Box<Future<Item=Self::Response, Error=Self::Error> + Send + 'static>;
 
     fn call(&self, message: Self::Request) -> Self::Future {
-
-        let addr = self.pool.get().expect("Failed to get address from pool");
-
-        debug!("Starting backend request to {:?}", addr);
-
-        // This is a future to a framed transport. The call to pipline::connect below expects a
-        // future to a socket.
-        let framed = TcpStream::connect(&addr, &self.handle.clone()).map(|sock| {
-            framed::ProxyFramed::new(sock, backend::HttpParser::new(), backend::HttpSerializer {})
-        });
-
-        let pipeline = pipeline::connect(framed, &self.handle.clone());
-        pipeline.call(message).boxed()
+        self.backend.call(message).boxed()
     }
 
     fn poll_ready(&self) -> Async<()> {
@@ -57,10 +45,21 @@ pub fn listen(addr: SocketAddr, pool: Pool) -> result::Result<(), http::Error> {
     let f = listener.incoming().for_each(|(sock, addr)| {
         debug!("Incoming connection on {}", addr);
 
+        let addr = pool.get().expect("Failed to get address from pool");
+        debug!("Preparing backend request to {:?}", addr);
+
+        // This is a future to a framed transport. The call to pipline::connect below expects a
+        // future to a socket.
+        let framed = TcpStream::connect(&addr, &handle.clone()).map(|sock| {
+            framed::ProxyFramed::new(sock, backend::HttpParser::new(), backend::HttpSerializer {})
+        });
+
+        let backend = pipeline::connect(framed, &handle.clone());
+
         let service = Proxy{
-            handle: handle.clone(),
-            pool: pool.clone(),
+            backend: backend,
         };
+
         let framed = framed::ProxyFramed::new(sock, frontend::HttpParser {}, frontend::HttpSerializer {});
         let pipeline = pipeline::Server::new(service, framed).map(|_| ()).map_err(|e| {
             error!("Pipeline error occurred: {:?}", e);
