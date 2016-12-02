@@ -16,6 +16,17 @@ The goal is to build an ELB-like load balancer that works well in the dynamic VM
 
 Credit to Hoverbear who talked through some of the design with me.
 
+### New Design
+
+* frontend receives request from client.
+   * Read data off socket.
+   * Parse the head of that request to determine body length.
+   * Write head to backend. Write body to backend.
+* backend receives response from server.
+   * Read data off socket.
+   * Parse the head of that request to determine body length.
+   * Write head to frontend. Write body to frontend.
+
 ## Running Protype
 
    * `RUST_LOG=alacrity cargo run --bin alacrity`
