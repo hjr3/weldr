@@ -147,20 +147,26 @@ impl<T, P, S> FramedIo for ProxyFramed<T, P, S>
     fn read(&mut self) -> Poll<Self::Out, io::Error> {
         trace!("Reading from upstream");
 
-        let bytes = try_ready!(self.upstream.try_read_buf(&mut self.rd));
+        // TODO replace this with a ring buffer so we can save on allocations
+        let mut rd =  ByteBuf::with_capacity(8 * 1024);
+        let bytes = try_ready!(self.upstream.try_read_buf(&mut rd));
         trace!("Read {} bytes", bytes);
 
-        let request = try_ready!(self.parse.parse(&mut self.rd));
+        let request = try_ready!(self.parse.parse(&mut rd));
 
         Ok(Async::Ready(request))
     }
 
     fn poll_write(&mut self) -> Async<()> {
-        if self.is_writeable {
-            Async::Ready(())
-        } else {
-            Async::NotReady
+        // Apply backpessure if the buffer is full
+        if self.wr.capacity() - self.wr.len() == 0 {
+            debug!("Buffer is full, trying to flush");
+            if self.flush().is_err() {
+                return Async::NotReady;
+            }
         }
+
+        Async::Ready(())
     }
 
     fn write(&mut self, msg: Self::In) -> Poll<(), io::Error> {
@@ -171,10 +177,13 @@ impl<T, P, S> FramedIo for ProxyFramed<T, P, S>
         //trace!("Wrote {} bytes", bytes);
         //self.wr.clear();
 
-        // Apply backpessure if the buffer is full
         if self.wr.capacity() - self.wr.len() == 0 {
+            // TODO check poll_write before calling write each time
             debug!("Buffer is full, trying to flush");
-            try_ready!(self.flush());
+            if self.flush().is_err() {
+                return Ok(Async::NotReady);
+            }
+            //panic!("poll_write completed but the buffer is still full?");
         }
 
         // Serialize the msg
