@@ -12,12 +12,10 @@ tokio-core = "0.1.0"
 tokio-proto = { git = "https://github.com/tokio-rs/tokio-proto" }
 tokio-service = { git = "https://github.com/tokio-rs/tokio-service" }
 tokio-timer = { git = "https://github.com/tokio-rs/tokio-timer" }
-bytes = { git = "https://github.com/carllerche/bytes" }
-nom = "2.0.0"
+httparse = "1.1.2"
 
 rustful = "0.9"
 rustc-serialize = "0.3.19"
-uuid = { version = "0.3.1", features = ["v4"] }
 
 [dev-dependencies]
 hyper = "0.9"

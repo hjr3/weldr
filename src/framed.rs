@@ -1,200 +1,151 @@
 use std::io;
 
-use futures::{Poll, Async};
-use tokio_core::io::{Io, FramedIo};
-use tokio_proto::{TryRead, TryWrite};
+use futures::{Async, Poll, Stream, Sink, StartSend, AsyncSink};
+use tokio_core::io::{Io, Codec, EasyBuf};
+use tokio_proto::streaming::pipeline::Transport;
 
-use bytes::Buf;
-use bytes::ByteBuf;
-
-/// Implementation of parsing a frame from an internal buffer.
+/// A unified `Stream` and `Sink` interface to an underlying `Io` object, using
+/// the `Encode` and `Decode` traits to encode and decode frames.
 ///
-/// This trait is used when constructing an instance of `ProxyFramed`. It defines how
-/// to parse the incoming bytes on a stream to the specified type of frame for
-/// that framed I/O stream.
-///
-/// The primary method of this trait, `parse`, attempts to parse a method from a
-/// buffer of bytes. It has the option of returning `NotReady`, indicating that
-/// more bytes need to be read before parsing can continue as well.
-pub trait Parse {
-
-    /// The type that this instance of `Parse` will attempt to be parsing.
-    ///
-    /// This is typically a frame being parsed from an input stream, such as an
-    /// HTTP request, a Redis command, etc.
-    type Out;
-
-    /// Attempts to parse a frame from the provided buffer of bytes.
-    ///
-    /// This method is called by `ProxyFramed` whenever bytes are ready to be parsed.
-    /// The provided buffer of bytes is what's been read so far, and this
-    /// instance of `Parse` can determine whether an entire frame is in the
-    /// buffer and is ready to be returned.
-    ///
-    /// If an entire frame is available, then this instance will remove those
-    /// bytes from the buffer provided and return them as a parsed frame. Note
-    /// that removing bytes from the provided buffer doesn't always necessarily
-    /// copy the bytes, so this should be an efficient operation in most
-    /// circumstances.
-    ///
-    /// If the bytes look valid, but a frame isn't fully available yet, then
-    /// `Async::NotReady` is returned. This indicates to the `ProxyFramed` instance
-    /// that it needs to read some more bytes before calling this method again.
-    ///
-    /// Finally, if the bytes in the buffer are malformed then an error is
-    /// returned indicating why. This informs `ProxyFramed` that the stream is now
-    /// corrupt and should be terminated.
-    fn parse(&mut self, buf: &mut ByteBuf) -> Poll<Self::Out, io::Error>;
-
-    /// A default method available to be called when there are no more bytes
-    /// available to be read from the underlying I/O.
-    ///
-    /// This method defaults to calling `parse` and returns an error if
-    /// `NotReady` is returned. Typically this doesn't need to be implemented
-    /// unless the framing protocol differs near the end of the stream.
-    fn done(&mut self, buf: &mut ByteBuf) -> io::Result<Self::Out> {
-        match try!(self.parse(buf)) {
-            Async::Ready(frame) => Ok(frame),
-            Async::NotReady => Err(io::Error::new(io::ErrorKind::Other,
-                                                  "bytes remaining on stream")),
-        }
-    }
-}
-
-/// A trait for serializing frames into a byte buffer.
-///
-/// This trait is used as a building block of `ProxyFramed` to define how frames are
-/// serialized into bytes to get passed to the underlying byte stream. Each
-/// frame written to `ProxyFramed` will be serialized with this trait to an internal
-/// buffer. That buffer is then written out when possible to the underlying I/O
-/// stream.
-pub trait Serialize {
-
-    /// The frame that's being serialized to a byte buffer.
-    ///
-    /// This type is the type of frame that's also being written to a `ProxyFramed`.
-    type In;
-
-    /// Serializes a frame into the buffer provided.
-    ///
-    /// This method will serialize `msg` into the byte buffer provided by `buf`.
-    /// The `buf` provided is an internal buffer of the `ProxyFramed` instance and
-    /// will be written out when possible.
-    fn serialize(&mut self, msg: Self::In, buf: &mut ByteBuf);
-}
-
-pub struct ProxyFramed<T, P, S> {
+/// You can acquire a `Framed` instance by using the `Io::framed` adapter.
+pub struct Framed<T, C> {
     upstream: T,
-    parse: P,
-    serialize: S,
+    codec: C,
+    eof: bool,
     is_readable: bool,
-    is_writeable: bool,
-    rd: ByteBuf,
-    wr: ByteBuf,
+    rd: EasyBuf,
+    wr: Vec<u8>,
 }
 
-impl<T, P, S> ProxyFramed<T, P, S>
-    where T: Io + TryRead + TryWrite,
-          P: Parse,
-          S: Serialize,
-{
-    /// Creates a new instance of `ProxyFramed` from the given component pieces.
-    ///
-    /// This method will create a new instance of `ProxyFramed` which implements
-    /// `FramedIo` for reading and writing frames from an underlying I/O stream.
-    /// The `upstream` argument here is the byte-based I/O stream that it will
-    /// be operating on. Data will be read from this stream and parsed with
-    /// `parse` into frames. Frames written to this instance will be serialized
-    /// by `serialize` and then written to `upstream`.
-    ///
-    /// The `rd` and `wr` buffers provided are used for reading and writing
-    /// bytes and provide a small amount of control over how buffering happens.
-    pub fn new(upstream: T,
-               parse: P,
-               serialize: S) -> ProxyFramed<T, P, S> {
+impl<T: Io, C: Codec> Stream for Framed<T, C> {
+    type Item = C::In;
+    type Error = io::Error;
 
-        trace!("Creating new ProxyFramed transport");
-        ProxyFramed {
-            upstream: upstream,
-            parse: parse,
-            serialize: serialize,
-            is_readable: true,
-            is_writeable: true,
-            rd: ByteBuf::with_capacity(8 * 1024),
-            wr: ByteBuf::with_capacity(8 * 1024),
-        }
-    }
-}
-
-impl<T, P, S> FramedIo for ProxyFramed<T, P, S>
-    where T: Io,
-          P: Parse,
-          S: Serialize,
-{
-    type In = S::In;
-    type Out = P::Out;
-
-    fn poll_read(&mut self) -> Async<()> {
-        if self.is_readable {
-            Async::Ready(())
-        } else {
-            Async::NotReady
-        }
-    }
-
-    fn read(&mut self) -> Poll<Self::Out, io::Error> {
-        trace!("Reading from upstream");
-
-        let bytes = try_ready!(self.upstream.try_read_buf(&mut self.rd));
-        trace!("Read {} bytes", bytes);
-
-        let request = try_ready!(self.parse.parse(&mut self.rd));
-
-        Ok(Async::Ready(request))
-    }
-
-    fn poll_write(&mut self) -> Async<()> {
-        if self.is_writeable {
-            Async::Ready(())
-        } else {
-            Async::NotReady
-        }
-    }
-
-    fn write(&mut self, msg: Self::In) -> Poll<(), io::Error> {
-        //trace!("Writing to {}", self.upstream.peer_addr().unwrap());
-
-        // Serialize the msg
-        self.serialize.serialize(msg, &mut self.wr);
-
-        trace!("writing; remaining={:?}", self.wr.len());
-
-        let bytes = try_ready!(self.upstream.try_write_buf(&mut self.wr));
-        trace!("Wrote {} bytes", bytes);
-        self.wr.clear();
-        self.is_writeable = false;
-
-        // TODO: should provide some backpressure, such as when the buffer is
-        //       too full this returns `NotReady` or something like that.
-        Ok(Async::Ready(()))
-    }
-
-    fn flush(&mut self) -> Poll<(), io::Error> {
-        //trace!("Flushing I/O to {}", self.upstream.peer_addr().unwrap());
-
-        try_ready!(self.upstream.try_flush());
-
+    fn poll(&mut self) -> Poll<Option<C::In>, io::Error> {
         loop {
-            if self.wr.bytes().len() == 0 {
-                trace!("framed transport flushed");
-                return Ok(Async::Ready(()));
+            // If the read buffer has any pending data, then it could be
+            // possible that `decode` will return a new frame. We leave it to
+            // the decoder to optimize detecting that more data is required.
+            if self.is_readable {
+                if self.eof {
+                    if self.rd.len() == 0 {
+                        return Ok(None.into())
+                    } else {
+                        let frame = try!(self.codec.decode_eof(&mut self.rd));
+                        return Ok(Async::Ready(Some(frame)))
+                    }
+                }
+                trace!("attempting to decode a frame");
+                if let Some(frame) = try!(self.codec.decode(&mut self.rd)) {
+                    trace!("frame decoded from buffer");
+                    return Ok(Async::Ready(Some(frame)));
+                }
+                self.is_readable = false;
             }
 
-            trace!("writing; remaining={:?}", self.wr.len());
+            assert!(!self.eof);
 
-            let bytes = try_ready!(self.upstream.try_write_buf(&mut self.wr));
-            trace!("Wrote {} bytes", bytes);
-            self.wr.clear();
+            // Otherwise, try to read more data and try again
+            //
+            // TODO: shouldn't read_to_end, that may read a lot
+            let before = self.rd.len();
+            let ret = self.upstream.read_to_end(&mut self.rd.get_mut());
+            match ret {
+                Ok(n) => {
+                    debug!("Read {} bytes", n);
+                    self.eof = true;
+                }
+                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    if self.rd.len() == before {
+                        return Ok(Async::NotReady)
+                    }
+                }
+                Err(e) => return Err(e),
+            }
+            self.is_readable = true;
         }
     }
 }
+
+impl<T: Io, C: Codec> Sink for Framed<T, C> {
+    type SinkItem = C::Out;
+    type SinkError = io::Error;
+
+    fn start_send(&mut self, item: C::Out) -> StartSend<C::Out, io::Error> {
+        // If the buffer is already over 8KiB, then attempt to flush it. If after flushing it's
+        // *still* over 8KiB, then apply backpressure (reject the send).
+        if self.wr.len() > 8 * 1024 {
+            try!(self.poll_complete());
+            if self.wr.len() > 8 * 1024 {
+                return Ok(AsyncSink::NotReady(item));
+            }
+        }
+
+        try!(self.codec.encode(item, &mut self.wr));
+        Ok(AsyncSink::Ready)
+    }
+
+    fn poll_complete(&mut self) -> Poll<(), io::Error> {
+        trace!("flushing framed transport");
+
+        while !self.wr.is_empty() {
+            trace!("writing; remaining={}", self.wr.len());
+            let n = try_nb!(self.upstream.write(&self.wr));
+            if n == 0 {
+                return Err(io::Error::new(io::ErrorKind::WriteZero,
+                                          "failed to write frame to transport"));
+            }
+            self.wr.drain(..n);
+        }
+
+        // Try flushing the underlying IO
+        try_nb!(self.upstream.flush());
+
+        trace!("framed transport flushed");
+        return Ok(Async::Ready(()));
+    }
+}
+
+pub fn framed<T, C>(io: T, codec: C) -> Framed<T, C> {
+    Framed {
+        upstream: io,
+        codec: codec,
+        eof: false,
+        is_readable: false,
+        rd: EasyBuf::new(),
+        wr: Vec::with_capacity(8 * 1024),
+    }
+}
+
+impl<T, C> Framed<T, C> {
+
+    /// Returns a reference to the underlying I/O stream wrapped by `Framed`.
+    ///
+    /// Note that care should be taken to not tamper with the underlying stream
+    /// of data coming in as it may corrupt the stream of frames otherwise being
+    /// worked with.
+    pub fn get_ref(&self) -> &T {
+        &self.upstream
+    }
+
+    /// Returns a mutable reference to the underlying I/O stream wrapped by
+    /// `Framed`.
+    ///
+    /// Note that care should be taken to not tamper with the underlying stream
+    /// of data coming in as it may corrupt the stream of frames otherwise being
+    /// worked with.
+    pub fn get_mut(&mut self) -> &mut T {
+        &mut self.upstream
+    }
+
+    /// Consumes the `Framed`, returning its underlying I/O stream.
+    ///
+    /// Note that care should be taken to not tamper with the underlying stream
+    /// of data coming in as it may corrupt the stream of frames otherwise being
+    /// worked with.
+    pub fn into_inner(self) -> T {
+        self.upstream
+    }
+}
+
+impl <T, C> Transport for Framed<T, C> where C: Codec + 'static, T: Io + 'static {}

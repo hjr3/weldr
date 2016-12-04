@@ -1,52 +1,43 @@
+use std::io;
 use std::net::SocketAddr;
 use std::result;
 
-use futures::{Future, Async};
-use futures::stream::Stream;
+use futures::{Future, Stream};
 use tokio_service::Service;
-use tokio_proto::{pipeline, Message, Body};
-use tokio_core::reactor::{Core, Handle};
-use tokio_core::net::{TcpStream, TcpListener};
+use tokio_core::net::{TcpListener};
+use tokio_core::reactor::{Core};
+use tokio_proto::{BindServer, TcpClient};
+use tokio_proto::util::client_proxy::{ClientProxy, Response};
 
-use http;
-use framed;
 use backend;
 use frontend;
 use pool::Pool;
 
-pub struct Proxy {
-    handle: Handle,
-    pool: Pool,
+pub struct Proxy<R, S> {
+    backend: ClientProxy<R, S, io::Error>,
 }
 
-impl Service for Proxy {
-    type Request = Message<http::Request, Body<http::Chunk, http::Error>>;
-    type Response = Message<http::Response, Body<http::Chunk, http::Error>>;
-    type Error = http::Error;
-    type Future = Box<Future<Item=Self::Response, Error=Self::Error> + Send + 'static>;
+impl<R, S> Service for Proxy<R, S> {
+    type Request = R;
+    type Response = S;
+    type Error = io::Error;
+    type Future = Response<S, io::Error>;
 
     fn call(&self, message: Self::Request) -> Self::Future {
-
-        let addr = self.pool.get().expect("Failed to get address from pool");
-
-        debug!("Starting backend request to {:?}", addr);
-
-        // This is a future to a framed transport. The call to pipline::connect below expects a
-        // future to a socket.
-        let framed = TcpStream::connect(&addr, &self.handle.clone()).map(|sock| {
-            framed::ProxyFramed::new(sock, backend::HttpParser {}, backend::HttpSerializer {})
-        });
-
-        let pipeline = pipeline::connect(framed, &self.handle.clone());
-        pipeline.call(message).boxed()
-    }
-
-    fn poll_ready(&self) -> Async<()> {
-        Async::Ready(())
+        trace!("frontend service");
+        self.backend.call(message)
     }
 }
 
-pub fn listen(addr: SocketAddr, pool: Pool) -> result::Result<(), http::Error> {
+impl<R, S> Proxy<R, S> {
+    pub fn new(backend: ClientProxy<R, S, io::Error>) -> Proxy<R, S> {
+        Proxy {
+            backend: backend,
+        }
+    }
+}
+
+pub fn listen(addr: SocketAddr, pool: Pool) -> result::Result<(), io::Error> {
 
     let mut lp = Core::new().unwrap();
     let handle = lp.handle();
@@ -57,17 +48,22 @@ pub fn listen(addr: SocketAddr, pool: Pool) -> result::Result<(), http::Error> {
     let f = listener.incoming().for_each(|(sock, addr)| {
         debug!("Incoming connection on {}", addr);
 
-        let service = Proxy{
-            handle: handle.clone(),
-            pool: pool.clone(),
-        };
-        let framed = framed::ProxyFramed::new(sock, frontend::HttpParser {}, frontend::HttpSerializer {});
-        let pipeline = pipeline::Server::new(service, framed).map(|_| ()).map_err(|e| {
-            error!("Pipeline error occurred: {:?}", e);
+        let addr = pool.get().expect("Failed to get address from pool");
+        debug!("Preparing backend request to {:?}", addr);
+
+        // We attach the handle to Frontend to force the compiler to acknowledge that `backend`
+        // will not outlive the handle.
+        let frontend = frontend::Frontend { handle: handle.clone() };
+        let client = TcpClient::new(backend::Backend);
+        let f = client.connect(&addr, &handle.clone()).map(move |backend| {
+            let service = Proxy::new(backend);
+            frontend.bind_server(&frontend.handle, sock, service);
+        }).map_err(|e| {
+            error!("Error connecting to backend: {:?}", e);
             ()
         });
 
-        handle.spawn(pipeline);
+        handle.spawn(f);
 
         Ok(())
     });
