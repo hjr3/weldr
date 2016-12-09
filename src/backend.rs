@@ -1,91 +1,111 @@
 use std::io;
 
-use futures::{Poll, Async};
-use tokio_proto::pipeline::Frame;
+use tokio_core::io::{Io, Codec, EasyBuf};
+use tokio_proto::streaming::pipeline::{ClientProto, Frame};
 
-use bytes::{ByteBuf, BufMut};
+use framed;
+use request::{self, Request};
+use response::{self, Response};
 
-use http;
+pub struct Backend;
 
-use framed::{Parse, Serialize};
+impl<T: Io + 'static> ClientProto<T> for Backend {
+    type Request = Request;
+    type RequestBody = Vec<u8>;
+    type Response = Response;
+    type ResponseBody = Vec<u8>;
+    type Error = io::Error;
+    type Transport = framed::Framed<T, HttpCodec>;
+    type BindTransport = io::Result<framed::Framed<T, HttpCodec>>;
 
-pub struct HttpParser {}
+    fn bind_transport(&self, io: T) -> Self::BindTransport {
+        Ok(framed::framed(io, HttpCodec::new()))
+    }
+}
 
-impl Parse for HttpParser {
-    type Out = Frame<http::Response, http::Chunk, http::Error>;
+pub struct HttpCodec {
+    content_length_remaining: Option<usize>,
+}
 
-    fn parse(&mut self, buf: &mut ByteBuf) -> Poll<Self::Out, io::Error> {
+impl HttpCodec {
+    pub fn new() -> HttpCodec {
+        HttpCodec {
+            content_length_remaining: None,
+        }
+    }
+}
+
+impl Codec for HttpCodec {
+    type In = Frame<Response, Vec<u8>, io::Error>;
+    type Out = Frame<Request, Vec<u8>, io::Error>;
+
+    fn decode(&mut self, buf: &mut EasyBuf) -> io::Result<Option<Self::In>> {
+        trace!("decode");
+        //debug!("Raw response {:?}", buf.as_ref());
+        //debug!("String response {:?}", unsafe {::std::str::from_utf8_unchecked(buf.as_ref())});
         if buf.len() == 0 {
+            return Ok(None);
+        }
+
+        if let Some(content_length) = self.content_length_remaining {
+            debug!("Found content length remaining: {:?} bytes", self.content_length_remaining);
+            debug!("Buffer length remaining: {:?} bytes", buf.len());
+            let len = ::std::cmp::min(content_length, buf.len());
+            let raw = buf.drain_to(len);
+            let body = Vec::from(raw.as_ref());
+
+            if len == content_length {
+                self.content_length_remaining = None;
+            } else {
+                self.content_length_remaining = Some(content_length - len);
+            }
+
+            debug!("Content length remaining: {:?} bytes", self.content_length_remaining);
+
             return Ok(
-                Async::Ready(
-                    Frame::Done
+                Some(
+                    Frame::Body { chunk: Some(body) }
                 )
             );
         }
 
-        trace!("Attempting to parse bytes into HTTP Request");
+        match try!(response::decode(buf)) {
+            None => {
+                debug!("Partial response");
+                Ok(None)
+            }
+            Some(response) => {
+                self.content_length_remaining = response.content_length_remaining;
+                debug!("Content length of {:?} remaining", self.content_length_remaining);
 
-        let mut parser = http::parser::ResponseParser::new();
-        let response = match parser.parse_response(buf) {
-            Ok(Some(response)) => response,
-            Ok(None) => panic!("Not enough bytes to parse response"),
-            Err(e) => panic!("Error parsing response: {:?}", e),
-        };
-
-        debug!("Parser created: {:?}", response);
-
-        return Ok(
-            Async::Ready(
-                Frame::Message{
-                    message: response,
-                    body: false,
-                }
-            )
-        );
+                Ok(
+                    Some(
+                        Frame::Message { message: response, body: self.content_length_remaining.is_some() }
+                    )
+                )
+            }
+        }
     }
-}
 
-pub struct HttpSerializer {}
-
-impl Serialize for HttpSerializer {
-
-    type In = Frame<http::Request, http::Chunk, http::Error>;
-
-    /// Serializes a frame into the buffer provided.
-    ///
-    /// This method will serialize `msg` into the byte buffer provided by `buf`.
-    /// The `buf` provided is an internal buffer of the `ProxyFramed` instance and
-    /// will be written out when possible.
-    fn serialize(&mut self, msg: Self::In, buf: &mut ByteBuf) {
-        trace!("Serializing message frame: {:?}", msg);
+    fn encode(&mut self, msg: Self::Out, buf: &mut Vec<u8>) -> io::Result<()> {
+        trace!("encode");
+        debug!("Request {:?}", msg);
 
         match msg {
             Frame::Message { message, body: _ } => {
-                let request = message;
-                let head = format!("{}", request.head);
-                trace!("Computed message to send to backend:\r\n{}", head);
-
-                let head = head.into_bytes();
-                trace!("Trying to write {} bytes from request head", head.len());
-                buf.copy_from_slice(&head[..]);
-                trace!("Copied {} bytes from request head", head.len());
-
-                if !request.body.is_empty() {
-                    match request.head.content_length() {
-                        Some(_) => {
-                            if let Some(chunk) = request.body.first() {
-                                trace!("Trying to write {} bytes from request chunk", chunk.0.len());
-                                buf.copy_from_slice(&chunk.0[..]);
-                                trace!("Copied {} bytes from request chunk", chunk.0.len());
-                            }
-                        }
-                        None => {
-                            panic!("Transfer encoding chunked not implemented for request body");
-                        }
-                    }
+                request::encode(message, buf);
+            }
+            Frame::Body { chunk } => {
+                if let Some(mut chunk) = chunk {
+                    buf.append(&mut chunk);
                 }
             }
-            _ => unimplemented!(),
+            Frame::Error { error } => {
+                error!("Upstream error: {:?}", error);
+                return Err(error);
+            }
         }
+
+        Ok(())
     }
 }

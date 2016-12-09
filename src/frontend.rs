@@ -1,90 +1,74 @@
 use std::io;
 
-use futures::{Poll, Async};
-use tokio_proto::pipeline::Frame;
+use tokio_core::io::{Io, Codec, EasyBuf};
+use tokio_core::reactor::Handle;
+use tokio_proto::streaming::pipeline::{Frame, ServerProto};
 
-use bytes::BufMut;
-use bytes::ByteBuf;
+use framed;
+use request::{self, Request};
+use response::{self, Response};
 
-use http;
+pub struct Frontend {
+    pub handle: Handle,
+}
 
-use framed::{Parse, Serialize};
+impl<T: Io + 'static> ServerProto<T> for Frontend {
+    type Request = Request;
+    type RequestBody = Vec<u8>;
+    type Response = Response;
+    type ResponseBody = Vec<u8>;
+    type Error = io::Error;
+    type Transport = framed::Framed<T, HttpCodec>;
+    type BindTransport = io::Result<framed::Framed<T, HttpCodec>>;
 
-pub struct HttpParser {}
-
-impl Parse for HttpParser {
-    type Out = Frame<http::Request, http::Chunk, http::Error>;
-
-    fn parse(&mut self, buf: &mut ByteBuf) -> Poll<Self::Out, io::Error> {
-        if buf.len() == 0 {
-            return Ok(
-                Async::Ready(
-                    Frame::Done
-                )
-            );
-        }
-
-        trace!("Attempting to parse bytes into HTTP Request");
-
-        let mut parser = http::parser::RequestParser::new();
-        let request = match parser.parse_request(buf) {
-            Ok(Some(request)) => request,
-            Ok(None) => panic!("Not enough bytes to parse request"),
-            Err(e) => panic!("Error parsing request: {:?}", e),
-        };
-
-        debug!("Parser created: {:?}", request);
-
-        buf.clear();
-
-        Ok(
-            Async::Ready(
-                Frame::Message{
-                    message: request,
-                    body: false,
-                }
-            )
-        )
+    fn bind_transport(&self, io: T) -> Self::BindTransport {
+        Ok(framed::framed(io, HttpCodec::new()))
     }
 }
 
-pub struct HttpSerializer {}
+pub struct HttpCodec {
+}
 
-impl Serialize for HttpSerializer {
+impl HttpCodec {
+    pub fn new() -> HttpCodec {
+        HttpCodec {
+        }
+    }
+}
 
-    type In = Frame<http::Response, http::Chunk, http::Error>;
+impl Codec for HttpCodec {
+    type In = Frame<Request, Vec<u8>, io::Error>;
+    type Out = Frame<Response, Vec<u8>, io::Error>;
 
-    /// Serializes a frame into the buffer provided.
-    ///
-    /// This method will serialize `msg` into the byte buffer provided by `buf`.
-    /// The `buf` provided is an internal buffer of the `ProxyFramed` instance and
-    /// will be written out when possible.
-    fn serialize(&mut self, msg: Self::In, buf: &mut ByteBuf) {
-        trace!("Serializing message frame: {:?}", msg);
+    fn decode(&mut self, buf: &mut EasyBuf) -> io::Result<Option<Self::In>> {
+        trace!("decode");
+        debug!("Raw request {:?}", buf.as_ref());
 
+        match try!(request::decode(buf)) {
+            None => {
+                debug!("Partial request");
+                Ok(None)
+            }
+            Some(request) => {
+                // TODO handle streaming body
+                Ok(
+                    Some(
+                        Frame::Message { message: request, body: false }
+                    )
+                )
+            }
+        }
+    }
+
+    fn encode(&mut self, msg: Self::Out, buf: &mut Vec<u8>) -> io::Result<()> {
+        trace!("encode");
         match msg {
-            Frame::Message {
-                ref message,
-                body: _,
-            } => {
-                let response = message;
-                let head = format!("{}", response.head).into_bytes();
-
-                trace!("Trying to write {} bytes from response head", head.len());
-                buf.copy_from_slice(&head[..]);
-                trace!("Copied {} bytes from response head", head.len());
-
-                match response.head.content_length() {
-                    Some(_) => {
-                        if let Some(chunk) = response.body.first() {
-                            trace!("Trying to write {} bytes from response chunk", chunk.0.len());
-                            buf.copy_from_slice(&chunk.0[..]);
-                            trace!("Copied {} bytes from response chunk", chunk.0.len());
-                        }
-                    }
-                    None => {
-                        panic!("Transfer encoding chunked not implemented");
-                    }
+            Frame::Message { message, body: _ } => {
+                response::encode(message, buf);
+            }
+            Frame::Body { chunk } => {
+                if let Some(mut chunk) = chunk {
+                    buf.append(&mut chunk);
                 }
             }
             Frame::Error { error } => {
@@ -96,9 +80,9 @@ impl Serialize for HttpSerializer {
                 trace!("Trying to write {} bytes from response head", e.len());
                 buf.copy_from_slice(&e[..]);
                 trace!("Copied {} bytes from response head", e.len());
-
             }
-            _ => unimplemented!(),
         }
+
+        Ok(())
     }
 }
