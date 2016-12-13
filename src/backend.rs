@@ -4,16 +4,18 @@ use tokio_core::io::{Io, Codec, EasyBuf};
 use tokio_proto::streaming::pipeline::{ClientProto, Frame};
 
 use framed;
-use request::{self, Request};
-use response::{self, Response};
+use http::Chunk;
+use http::request::{self, Request};
+use http::response::{self, Response};
+use http::body;
 
 pub struct Backend;
 
 impl<T: Io + 'static> ClientProto<T> for Backend {
     type Request = Request;
-    type RequestBody = Vec<u8>;
+    type RequestBody = Chunk;
     type Response = Response;
-    type ResponseBody = Vec<u8>;
+    type ResponseBody = Chunk;
     type Error = io::Error;
     type Transport = framed::Framed<T, HttpCodec>;
     type BindTransport = io::Result<framed::Framed<T, HttpCodec>>;
@@ -24,20 +26,20 @@ impl<T: Io + 'static> ClientProto<T> for Backend {
 }
 
 pub struct HttpCodec {
-    content_length_remaining: Option<usize>,
+    body_codec: Option<body::Length>
 }
 
 impl HttpCodec {
     pub fn new() -> HttpCodec {
         HttpCodec {
-            content_length_remaining: None,
+            body_codec: None,
         }
     }
 }
 
 impl Codec for HttpCodec {
-    type In = Frame<Response, Vec<u8>, io::Error>;
-    type Out = Frame<Request, Vec<u8>, io::Error>;
+    type In = Frame<Response, Chunk, io::Error>;
+    type Out = Frame<Request, Chunk, io::Error>;
 
     fn decode(&mut self, buf: &mut EasyBuf) -> io::Result<Option<Self::In>> {
         trace!("decode");
@@ -47,26 +49,29 @@ impl Codec for HttpCodec {
             return Ok(None);
         }
 
-        if let Some(content_length) = self.content_length_remaining {
-            debug!("Found content length remaining: {:?} bytes", self.content_length_remaining);
-            debug!("Buffer length remaining: {:?} bytes", buf.len());
-            let len = ::std::cmp::min(content_length, buf.len());
-            let raw = buf.drain_to(len);
-            let body = Vec::from(raw.as_ref());
-
-            if len == content_length {
-                self.content_length_remaining = None;
-            } else {
-                self.content_length_remaining = Some(content_length - len);
+        if let Some(ref mut codec) = self.body_codec {
+            if codec.remaining() == 0 {
+                return Ok(
+                    Some(
+                        Frame::Body { chunk: None }
+                    )
+                );
             }
 
-            debug!("Content length remaining: {:?} bytes", self.content_length_remaining);
-
-            return Ok(
-                Some(
-                    Frame::Body { chunk: Some(body) }
-                )
-            );
+            return match try!(codec.decode(buf)) {
+                None => {
+                    // TODO should this be an error?
+                    debug!("Empty buffer?");
+                    Ok(None)
+                }
+                Some(chunk) => {
+                    Ok(
+                        Some(
+                            Frame::Body { chunk: Some(chunk) }
+                        )
+                    )
+                }
+            };
         }
 
         match try!(response::decode(buf)) {
@@ -74,13 +79,27 @@ impl Codec for HttpCodec {
                 debug!("Partial response");
                 Ok(None)
             }
-            Some(response) => {
-                self.content_length_remaining = response.content_length_remaining;
-                debug!("Content length of {:?} remaining", self.content_length_remaining);
+            Some(mut response) => {
+                if let Some(content_length) = response.content_length() {
+                    let mut codec = body::Length::new(content_length);
+
+                    match try!(codec.decode(buf)) {
+                        None => {
+                            debug!("Body with content length of {} but no more bytes in buffer", content_length);
+                        }
+                        Some(chunk) => {
+                            response.append_data(chunk.0.as_ref());
+                        }
+                    }
+
+                    if codec.remaining() > 0 {
+                        self.body_codec = Some(codec);
+                    }
+                }
 
                 Ok(
                     Some(
-                        Frame::Message { message: response, body: self.content_length_remaining.is_some() }
+                        Frame::Message { message: response, body: self.body_codec.is_some() }
                     )
                 )
             }
@@ -97,7 +116,7 @@ impl Codec for HttpCodec {
             }
             Frame::Body { chunk } => {
                 if let Some(mut chunk) = chunk {
-                    buf.append(&mut chunk);
+                    buf.append(&mut chunk.0);
                 }
             }
             Frame::Error { error } => {

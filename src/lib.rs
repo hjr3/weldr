@@ -11,8 +11,7 @@ extern crate httparse;
 
 // pub mod for now until the entire API is used internally
 pub mod pool;
-mod request;
-mod response;
+mod http;
 mod framed;
 pub mod proxy;
 pub mod backend;

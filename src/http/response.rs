@@ -10,8 +10,6 @@ pub struct Response {
     // TODO: use a small vec to avoid this unconditional allocation
     headers: Vec<(Slice, Slice)>,
     data: EasyBuf,
-    // TODO: abstract this away
-    pub content_length_remaining: Option<usize>,
 }
 
 type Slice = (usize, usize);
@@ -26,10 +24,13 @@ impl Response {
         self.headers()
             .find(|h| h.0.to_ascii_lowercase().as_str() == "content-length")
             .map(|h| {
-                // TODO properly parse this
                 let v = ::std::str::from_utf8(&h.1).unwrap();
                 v.parse::<usize>().ok()
             }).and_then(|v| v)
+    }
+
+    pub fn append_data(&mut self, buf: &[u8]) {
+        self.data.get_mut().extend_from_slice(buf);
     }
 
     fn headers(&self) -> ResponseHeaders {
@@ -75,25 +76,11 @@ pub fn decode(buf: &mut EasyBuf) -> io::Result<Option<Response>> {
         (status_code, headers, amt)
     };
 
-    let mut response = Response {
+    let response = Response {
         status_code: status_code,
         headers: headers,
-        data: buf.drain_to(amt),
-        content_length_remaining: None,
+        data: buf.drain_to(amt)
     };
-
-    if let Some(content_length) = response.content_length() {
-        debug!("Found content length of {}", content_length);
-        debug!("Remaining buffer length {}", buf.len());
-        let len = ::std::cmp::min(content_length, buf.len());
-        let content_length_remaining = content_length - len;
-        debug!("Content length remaining {}", content_length_remaining);
-        response.content_length_remaining = Some(content_length_remaining);
-
-        let body = buf.drain_to(len);
-        response.data.get_mut().extend_from_slice(body.as_ref());
-    }
-
 
     Ok(response.into())
 }

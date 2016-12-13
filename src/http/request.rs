@@ -1,13 +1,14 @@
 use std::{io, slice, str, fmt};
 
 use tokio_core::io::EasyBuf;
-
 use httparse;
+
+use super::Version;
 
 pub struct Request {
     method: Slice,
     path: Slice,
-    version: u8,
+    version: Version,
     // TODO: use a small vec to avoid this unconditional allocation
     headers: Vec<(Slice, Slice)>,
     data: EasyBuf,
@@ -21,15 +22,6 @@ pub struct RequestHeaders<'req> {
 }
 
 impl Request {
-    pub fn new() -> Request {
-        Request {
-            method: (0, 0),
-            path: (0, 0),
-            version: 11,
-            headers: Vec::new(),
-            data: EasyBuf::new(),
-        }
-    }
     pub fn method(&self) -> &str {
         str::from_utf8(self.slice(&self.method)).unwrap()
     }
@@ -38,7 +30,7 @@ impl Request {
         str::from_utf8(self.slice(&self.path)).unwrap()
     }
 
-    pub fn version(&self) -> u8 {
+    pub fn version(&self) -> Version {
         self.version
     }
 
@@ -90,6 +82,12 @@ pub fn decode(buf: &mut EasyBuf) -> io::Result<Option<Request>> {
           .map(|h| (toslice(h.name.as_bytes()), toslice(h.value)))
           .collect(),
          amt)
+    };
+
+    let version = match version {
+        0 => Version::Http10,
+        1 => Version::Http11,
+        _ => unimplemented!()
     };
 
     Ok(Request {
