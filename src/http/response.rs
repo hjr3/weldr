@@ -23,10 +23,10 @@ impl Response {
     pub fn content_length(&self) -> Option<usize> {
         self.headers()
             .find(|h| h.0.to_ascii_lowercase().as_str() == "content-length")
-            .map(|h| {
+            .and_then(|h| {
                 let v = ::std::str::from_utf8(&h.1).unwrap();
                 v.parse::<usize>().ok()
-            }).and_then(|v| v)
+            })
     }
 
     pub fn append_data(&mut self, buf: &[u8]) {
