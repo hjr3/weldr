@@ -81,7 +81,6 @@ fn method_on_http_server() {
 }
 
 #[test]
-#[ignore]
 fn request_body() {
     fn hello_request_body(mut req: Request, mut res: Response) {
         let mut body = String::new();
