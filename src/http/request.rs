@@ -1,3 +1,4 @@
+use std::ascii::AsciiExt;
 use std::{io, slice, str, fmt};
 
 use tokio_core::io::EasyBuf;
@@ -34,7 +35,20 @@ impl Request {
         self.version
     }
 
-    pub fn headers(&self) -> RequestHeaders {
+    pub fn append_data(&mut self, buf: &[u8]) {
+        self.data.get_mut().extend_from_slice(buf);
+    }
+
+    pub fn content_length(&self) -> Option<usize> {
+        self.headers()
+            .find(|h| h.0.to_ascii_lowercase().as_str() == "content-length")
+            .and_then(|h| {
+                let v = ::std::str::from_utf8(&h.1).unwrap();
+                v.parse::<usize>().ok()
+            })
+    }
+
+    fn headers(&self) -> RequestHeaders {
         RequestHeaders {
             headers: self.headers.iter(),
             req: self,

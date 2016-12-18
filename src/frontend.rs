@@ -8,6 +8,7 @@ use framed;
 use http::Chunk;
 use http::request::{self, Request};
 use http::response::{self, Response};
+use http::body;
 
 pub struct Frontend {
     pub handle: Handle,
@@ -28,11 +29,13 @@ impl<T: Io + 'static> ServerProto<T> for Frontend {
 }
 
 pub struct HttpCodec {
+    body_codec: Option<body::Length>
 }
 
 impl HttpCodec {
     pub fn new() -> HttpCodec {
         HttpCodec {
+            body_codec: None,
         }
     }
 }
@@ -45,16 +48,61 @@ impl Codec for HttpCodec {
         trace!("decode");
         debug!("Raw request {:?}", buf.as_ref());
 
+        if buf.len() == 0 {
+            return Ok(None);
+        }
+
+        if let Some(ref mut codec) = self.body_codec {
+            if codec.remaining() == 0 {
+                return Ok(
+                    Some(
+                        Frame::Body { chunk: None }
+                    )
+                );
+            }
+
+            return match try!(codec.decode(buf)) {
+                None => {
+                    // TODO should this be an error?
+                    debug!("Empty buffer?");
+                    Ok(None)
+                }
+                Some(chunk) => {
+                    Ok(
+                        Some(
+                            Frame::Body { chunk: Some(chunk) }
+                        )
+                    )
+                }
+            };
+        }
+
         match try!(request::decode(buf)) {
             None => {
                 debug!("Partial request");
                 Ok(None)
             }
-            Some(request) => {
-                // TODO handle streaming body
+            Some(mut request) => {
+                if let Some(content_length) = request.content_length() {
+                    let mut codec = body::Length::new(content_length);
+
+                    match try!(codec.decode(buf)) {
+                        None => {
+                            debug!("Body with content length of {} but no more bytes in buffer", content_length);
+                        }
+                        Some(chunk) => {
+                            request.append_data(chunk.0.as_ref());
+                        }
+                    }
+
+                    if codec.remaining() > 0 {
+                        self.body_codec = Some(codec);
+                    }
+                }
+
                 Ok(
                     Some(
-                        Frame::Message { message: request, body: false }
+                        Frame::Message { message: request, body: self.body_codec.is_some() }
                     )
                 )
             }
