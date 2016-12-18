@@ -38,6 +38,20 @@ impl Response {
             }).unwrap_or(false)
     }
 
+    pub fn transfer_encoding_chunked(&self) -> bool {
+        match self.headers()
+            .find(|h| h.0.to_ascii_lowercase().as_str() == "transfer-encoding") {
+
+            Some(h) => {
+                let v = ::std::str::from_utf8(&h.1).unwrap();
+                v.to_ascii_lowercase() == "chunked"
+            }
+            None => {
+                 false
+            }
+        }
+    }
+
     pub fn append_data(&mut self, buf: &[u8]) {
         self.data.get_mut().extend_from_slice(buf);
     }

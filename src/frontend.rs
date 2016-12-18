@@ -53,7 +53,7 @@ impl Codec for HttpCodec {
         }
 
         if let Some(ref mut codec) = self.body_codec {
-            if codec.remaining() == 0 {
+            if codec.remaining() == false {
                 return Ok(
                     Some(
                         Frame::Body { chunk: None }
@@ -95,7 +95,7 @@ impl Codec for HttpCodec {
                         }
                     }
 
-                    if codec.remaining() > 0 {
+                    if codec.remaining() {
                         self.body_codec = Some(codec);
                     }
                 }

@@ -13,6 +13,7 @@ tokio-proto = { git = "https://github.com/tokio-rs/tokio-proto" }
 tokio-service = { git = "https://github.com/tokio-rs/tokio-service" }
 tokio-timer = { git = "https://github.com/tokio-rs/tokio-timer" }
 httparse = "1.1.2"
+nom = "2.0.1"
 
 rustful = "0.9"
 rustc-serialize = "0.3.19"
