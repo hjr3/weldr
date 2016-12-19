@@ -8,7 +8,31 @@ use tokio_core::io::{Codec, EasyBuf};
 
 use super::Chunk;
 
+pub struct Chunked {}
+
+impl Codec for Chunked {
+    type In = Chunk;
+    type Out = Chunk;
+
+    fn decode(&mut self, buf: &mut EasyBuf) -> io::Result<Option<Self::In>> {
+        let len = buf.len();
+        trace!("Chunked decode {} bytes", len);
+        let body = buf.drain_to(len);
+        Ok(
+            Some(
+                Chunk(Vec::from(body.as_ref()))
+            )
+        )
+    }
+
+    fn encode(&mut self, msg: Self::Out, buf: &mut Vec<u8>) -> io::Result<()> {
+        buf.extend_from_slice(msg.0.as_ref());
+        Ok(())
+    }
+}
+
 /// Body decoding based on a Content-Length header
+#[derive(Debug)]
 pub struct Length {
     length: usize,
     remaining: usize,
@@ -122,5 +146,15 @@ mod tests {
         assert_eq!(4, codec.decode(&mut buf).unwrap().unwrap().0.len());
         assert_eq!(0, codec.remaining());
         assert_eq!(0, buf.len());
+    }
+
+    #[test]
+    fn test_decode_chunked() {
+        let mut buf = mock_buf(22);
+        let mut codec = Chunked{};
+        assert_eq!(22, codec.decode(&mut buf).unwrap().unwrap().0.len());
+
+        extend_mock_buf(&mut buf, 44);
+        assert_eq!(44, codec.decode(&mut buf).unwrap().unwrap().0.len());
     }
 }
