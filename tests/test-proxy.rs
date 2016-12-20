@@ -4,7 +4,7 @@ extern crate env_logger;
 #[macro_use] extern crate log;
 
 use hyper::server::{Server, Request, Response, Handler};
-use hyper::header::{ContentLength};
+use hyper::header::{ContentLength, ContentEncoding, Encoding};
 use hyper::Client;
 use std::io::{Read, Write};
 use std::net::SocketAddr;
@@ -101,5 +101,29 @@ fn request_body() {
         let mut body = String::new();
         res.read_to_string(&mut body).unwrap();
         assert_eq!(body, "hello");
+    });
+}
+
+#[test]
+fn response_body_streaming() {
+    fn hello_request_body(_: Request, mut res: Response) {
+        res.headers_mut().set(ContentEncoding(vec![Encoding::Chunked]));
+        let mut res = res.start().unwrap();
+        res.write_all(b"Hello World!").unwrap();
+    }
+
+    let _ = env_logger::init();
+
+    with_server(hello_request_body, 8102, &|port| {
+        let client = Client::new();
+        let url = url(port);
+        let mut res = client.get(&url).send().unwrap();
+        assert_eq!(res.status, hyper::Ok);
+
+        assert_eq!(res.headers.get::<ContentEncoding>(), Some(&ContentEncoding(vec![Encoding::Chunked])));
+
+        let mut body = String::new();
+        res.read_to_string(&mut body).unwrap();
+        assert_eq!(body, "Hello World!");
     });
 }

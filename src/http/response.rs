@@ -29,6 +29,15 @@ impl Response {
             })
     }
 
+    pub fn is_chunked(&self) -> bool {
+        self.headers()
+            .find(|h| h.0.to_ascii_lowercase().as_str() == "transfer-encoding")
+            .map(|h| {
+                let v = ::std::str::from_utf8(&h.1).unwrap();
+                v.to_ascii_lowercase().as_str() == "chunked"
+            }).unwrap_or(false)
+    }
+
     pub fn append_data(&mut self, buf: &[u8]) {
         self.data.get_mut().extend_from_slice(buf);
     }
