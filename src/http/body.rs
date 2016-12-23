@@ -32,14 +32,6 @@ impl BodyCodec {
             BodyCodec::UntilClose(ref mut u) => u.decode(buf),
         }
     }
-
-    pub fn encode(&mut self, msg: Chunk, buf: &mut Vec<u8>) -> io::Result<()> {
-        match *self {
-            BodyCodec::Length(ref mut l) => l.encode(msg, buf),
-            BodyCodec::Chunked(ref mut c) => c.encode(msg, buf),
-            BodyCodec::UntilClose(ref mut u) => u.encode(msg, buf),
-        }
-    }
 }
 
 /// Body decoding based on a Content-Length header
@@ -82,11 +74,6 @@ impl Length {
                 Chunk(Vec::from(body.as_ref()))
             )
         )
-    }
-
-    pub fn encode(&mut self, msg: Chunk, buf: &mut Vec<u8>) -> io::Result<()> {
-        buf.extend_from_slice(msg.0.as_ref());
-        Ok(())
     }
 }
 
@@ -240,11 +227,6 @@ impl Chunked {
 
         Ok(body)
     }
-
-    pub fn encode(&mut self, msg: Chunk, buf: &mut Vec<u8>) -> io::Result<()> {
-        buf.extend_from_slice(msg.0.as_ref());
-        Ok(())
-    }
 }
 
 pub struct UntilClose {
@@ -280,11 +262,6 @@ impl UntilClose {
                 Chunk(Vec::from(body.as_ref()))
             )
         )
-    }
-
-    pub fn encode(&mut self, msg: Chunk, buf: &mut Vec<u8>) -> io::Result<()> {
-        buf.extend_from_slice(msg.0.as_ref());
-        Ok(())
     }
 }
 

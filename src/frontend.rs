@@ -29,7 +29,7 @@ impl<T: Io + 'static> ServerProto<T> for Frontend {
 }
 
 pub struct HttpCodec {
-    body_codec: Option<body::Length>
+    body_codec: Option<body::BodyCodec>
 }
 
 impl HttpCodec {
@@ -84,11 +84,12 @@ impl Codec for HttpCodec {
             }
             Some(mut request) => {
                 if let Some(content_length) = request.content_length() {
-                    let mut codec = body::Length::new(content_length);
+                    info!("Found body with content length of {}", content_length);
+                    let mut codec = body::BodyCodec::Length(body::Length::new(content_length));
 
                     match try!(codec.decode(buf)) {
                         None => {
-                            debug!("Body with content length of {} but no more bytes in buffer", content_length);
+                            debug!("Decoding body but no more bytes in buffer");
                         }
                         Some(chunk) => {
                             request.append_data(chunk.0.as_ref());
@@ -97,6 +98,28 @@ impl Codec for HttpCodec {
 
                     if codec.remaining() {
                         self.body_codec = Some(codec);
+                    }
+                } else if request.transfer_encoding_chunked() {
+                    info!("Found body with chunked transfer");
+                    let mut codec = body::BodyCodec::Chunked(body::Chunked::new());
+
+                    match try!(codec.decode(buf)) {
+                        None => {
+                            debug!("Decoding body but no more bytes in buffer");
+                        }
+                        Some(chunk) => {
+                            request.append_data(chunk.0.as_ref());
+                        }
+                    }
+
+                    if codec.remaining() {
+                        self.body_codec = Some(codec);
+                    }
+                } else {
+                    if buf.len() != 0 {
+                        error!("No valid headers for request body");
+                        let msg = format!("Found request body with no content length or chunked transfer specified: {:?}", request);
+                        return Err(io::Error::new(io::ErrorKind::Other, msg));
                     }
                 }
 
