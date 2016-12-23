@@ -242,7 +242,7 @@ impl UntilClose {
     }
 
     pub fn remaining(&self) -> bool {
-        self.is_closed
+        self.is_closed == false
     }
 
     pub fn decode(&mut self, buf: &mut EasyBuf) -> io::Result<Option<Chunk>> {
@@ -270,7 +270,7 @@ mod tests {
     use tokio_core::io::EasyBuf;
     use super::*;
 
-    fn mock_buf_with_data(data: &[u8]) -> EasyBuf {
+    fn mock_buf(data: &[u8]) -> EasyBuf {
         let mut buf = EasyBuf::with_capacity(data.len());
         buf.get_mut().extend_from_slice(data);
         buf
@@ -283,7 +283,7 @@ mod tests {
 
     #[test]
     fn test_decode_length_buf_len_zero() {
-        let mut buf = EasyBuf::with_capacity(0);
+        let mut buf = mock_buf(&[]);
         assert_eq!(0, buf.len());
         let mut codec = Length::new(1);
         assert!(codec.decode(&mut buf).unwrap().is_none());
@@ -291,7 +291,7 @@ mod tests {
 
     #[test]
     fn test_decode_length_buf_len_equals_content_length() {
-        let mut buf = mock_buf_with_data(&[0u8; 64]);
+        let mut buf = mock_buf(&[0u8; 64]);
         let mut codec = Length::new(64);
         assert_eq!(64, codec.decode(&mut buf).unwrap().unwrap().0.len());
         assert_eq!(0, buf.len());
@@ -299,7 +299,7 @@ mod tests {
 
     #[test]
     fn test_decode_length_buf_len_greater_than_content_length() {
-        let mut buf = mock_buf_with_data(&[0u8; 65]);
+        let mut buf = mock_buf(&[0u8; 65]);
         let mut codec = Length::new(64);
         assert_eq!(64, codec.decode(&mut buf).unwrap().unwrap().0.len());
         assert_eq!(1, buf.len());
@@ -309,7 +309,7 @@ mod tests {
 
     #[test]
     fn test_decode_length_buf_len_less_than_content_length() {
-        let mut buf = mock_buf_with_data(&[0u8; 20]);
+        let mut buf = mock_buf(&[0u8; 20]);
         let mut codec = Length::new(64);
         assert_eq!(20, codec.decode(&mut buf).unwrap().unwrap().0.len());
         assert_eq!(44, codec.remaining);
@@ -328,7 +328,7 @@ mod tests {
 
     #[test]
     fn test_decode_chunked_buf_len_zero() {
-        let mut buf = EasyBuf::with_capacity(0);
+        let mut buf = mock_buf(&[]);
         assert_eq!(0, buf.len());
         let mut codec = Chunked::new();
         assert!(codec.decode(&mut buf).unwrap().is_none());
@@ -346,7 +346,7 @@ mod tests {
               0\r\n\
               \r\n";
 
-        let mut buf = mock_buf_with_data(body.as_ref());
+        let mut buf = mock_buf(body.as_ref());
 
         let mut codec = Chunked::new();
         assert_eq!(body.len(), codec.decode(&mut buf).unwrap().unwrap().0.len());
@@ -362,7 +362,7 @@ mod tests {
               0\r\n\
               \r\nx";
 
-        let mut buf = mock_buf_with_data(body.as_ref());
+        let mut buf = mock_buf(body.as_ref());
 
         let mut codec = Chunked::new();
         assert_eq!(body.len() - 1, codec.decode(&mut buf).unwrap().unwrap().0.len());
@@ -376,7 +376,7 @@ mod tests {
             b"7\r\n\
               Mozi";
 
-        let mut buf = mock_buf_with_data(body.as_ref());
+        let mut buf = mock_buf(body.as_ref());
 
         let mut codec = Chunked::new();
         assert_eq!(7, codec.decode(&mut buf).unwrap().unwrap().0.len());
@@ -389,5 +389,25 @@ mod tests {
         assert_eq!(5, codec.decode(&mut buf).unwrap().unwrap().0.len());
         assert_eq!(0, buf.len());
         assert_eq!(ChunkedState::Header, codec.state);
+    }
+
+    #[test]
+    fn test_decode_until_close_buf_len_zero() {
+        let mut buf = mock_buf(&[]);
+        assert_eq!(0, buf.len());
+        let mut codec = UntilClose::new();
+        assert!(codec.decode(&mut buf).unwrap().is_none());
+        assert_eq!(false, codec.remaining());
+    }
+
+    #[test]
+    fn test_decode_until_close_buf_len_greater_than_zero() {
+        let mut buf = mock_buf(&[0u8; 64]);
+        assert_eq!(64, buf.len());
+        let mut codec = UntilClose::new();
+        assert_eq!(buf.len(), codec.decode(&mut buf).unwrap().unwrap().0.len());
+        assert_eq!(true, codec.remaining());
+        assert!(codec.decode(&mut buf).unwrap().is_none());
+        assert_eq!(false, codec.remaining());
     }
 }
