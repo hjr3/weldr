@@ -1,3 +1,5 @@
+[![Build Status](https://travis-ci.org/hjr3/alacrity.svg?branch=master)](https://travis-ci.org/hjr3/alacrity)
+
 # Alacrity
 
 A HTTP 1.1 load balancer written in Rust using tokio.
