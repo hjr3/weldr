@@ -25,13 +25,8 @@ impl<T: Io + 'static> ClientProto<T> for Backend {
     }
 }
 
-enum BodyCodec {
-    Length(body::Length),
-    Chunked(body::Chunked),
-}
-
 pub struct HttpCodec {
-    body_codec: Option<BodyCodec>
+    body_codec: Option<body::BodyCodec>
 }
 
 impl HttpCodec {
@@ -55,40 +50,26 @@ impl Codec for HttpCodec {
         }
 
         if let Some(ref mut codec) = self.body_codec {
-            match *codec {
-                BodyCodec::Length(ref mut codec) => {
-                    if codec.remaining() != 0 {
-                        return match try!(codec.decode(buf)) {
-                            None => {
-                                // TODO should this be an error?
-                                debug!("Empty buffer?");
-                                Ok(None)
-                            }
-                            Some(chunk) => {
-                                Ok(
-                                    Some(
-                                        Frame::Body { chunk: Some(chunk) }
-                                    )
-                                )
-                            }
-                        };
-                    }
-                },
-                BodyCodec::Chunked(ref mut codec) => {
-                    return match try!(codec.decode(buf)) {
-                        None => {
-                            // TODO should this be an error?
-                            debug!("Empty buffer?");
-                            Ok(None)
-                        }
-                        Some(chunk) => {
-                            Ok(
-                                Some(
-                                    Frame::Body { chunk: Some(chunk) }
-                                )
-                            )
-                        }
-                    };
+            if codec.remaining() == false {
+                return Ok(
+                    Some(
+                        Frame::Body { chunk: None }
+                    )
+                );
+            }
+
+            return match try!(codec.decode(buf)) {
+                None => {
+                    // TODO should this be an error?
+                    debug!("Empty buffer?");
+                    Ok(None)
+                }
+                Some(chunk) => {
+                    Ok(
+                        Some(
+                            Frame::Body { chunk: Some(chunk) }
+                        )
+                    )
                 }
             }
         }
@@ -99,23 +80,28 @@ impl Codec for HttpCodec {
                 Ok(None)
             }
             Some(mut response) => {
-                if let Some(content_length) = response.content_length() {
-                    let mut codec = body::Length::new(content_length);
+                let mut codec = if let Some(content_length) = response.content_length() {
+                    info!("Found body with content length of {}", content_length);
+                    body::BodyCodec::Length(body::Length::new(content_length))
+                } else if response.transfer_encoding_chunked() {
+                    info!("Found body with chunked transfer");
+                    body::BodyCodec::Chunked(body::Chunked::new())
+                } else {
+                    info!("Found body with no content length or chunked transfer specified");
+                    body::BodyCodec::UntilClose(body::UntilClose::new())
+                };
 
-                    match try!(codec.decode(buf)) {
-                        None => {
-                            debug!("Body with content length of {} but no more bytes in buffer", content_length);
-                        }
-                        Some(chunk) => {
-                            response.append_data(chunk.0.as_ref());
-                        }
+                match try!(codec.decode(buf)) {
+                    None => {
+                        debug!("Decoding body but no more bytes in buffer");
                     }
+                    Some(chunk) => {
+                        response.append_data(chunk.0.as_ref());
+                    }
+                }
 
-                    if codec.remaining() > 0 {
-                        self.body_codec = Some(BodyCodec::Length(codec));
-                    }
-                } else if response.is_chunked() {
-                    self.body_codec = Some(BodyCodec::Chunked(body::Chunked{}));
+                if codec.remaining() {
+                    self.body_codec = Some(codec);
                 }
 
                 Ok(
