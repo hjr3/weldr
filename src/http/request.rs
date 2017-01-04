@@ -1,10 +1,9 @@
-use std::ascii::AsciiExt;
-use std::{io, slice, str, fmt};
+use std::{io, str, fmt};
 
 use tokio_core::io::EasyBuf;
 use httparse;
 
-use super::Version;
+use super::{Slice, Headers, Version};
 
 pub struct Request {
     method: Slice,
@@ -13,13 +12,6 @@ pub struct Request {
     // TODO: use a small vec to avoid this unconditional allocation
     headers: Vec<(Slice, Slice)>,
     data: EasyBuf,
-}
-
-type Slice = (usize, usize);
-
-pub struct RequestHeaders<'req> {
-    headers: slice::Iter<'req, (Slice, Slice)>,
-    req: &'req Request,
 }
 
 impl Request {
@@ -40,32 +32,17 @@ impl Request {
     }
 
     pub fn content_length(&self) -> Option<usize> {
-        self.headers()
-            .find(|h| h.0.to_ascii_lowercase().as_str() == "content-length")
-            .and_then(|h| {
-                let v = ::std::str::from_utf8(&h.1).unwrap();
-                v.parse::<usize>().ok()
-            })
+        self.headers().content_length()
     }
 
     pub fn transfer_encoding_chunked(&self) -> bool {
-        match self.headers()
-            .find(|h| h.0.to_ascii_lowercase().as_str() == "transfer-encoding") {
-
-            Some(h) => {
-                let v = ::std::str::from_utf8(&h.1).unwrap();
-                v.to_ascii_lowercase() == "chunked"
-            }
-            None => {
-                 false
-            }
-        }
+        self.headers().transfer_encoding_chunked()
     }
 
-    fn headers(&self) -> RequestHeaders {
-        RequestHeaders {
+    fn headers(&self) -> Headers {
+        Headers {
             headers: self.headers.iter(),
-            req: self,
+            data: &self.data,
         }
     }
 
@@ -129,16 +106,4 @@ pub fn decode(buf: &mut EasyBuf) -> io::Result<Option<Request>> {
 
 pub fn encode(msg: Request, buf: &mut Vec<u8>) {
     buf.extend_from_slice(msg.data.as_slice());
-}
-
-impl<'req> Iterator for RequestHeaders<'req> {
-    type Item = (&'req str, &'req [u8]);
-
-    fn next(&mut self) -> Option<(&'req str, &'req [u8])> {
-        self.headers.next().map(|&(ref a, ref b)| {
-            let a = self.req.slice(a);
-            let b = self.req.slice(b);
-            (str::from_utf8(a).unwrap(), b)
-        })
-    }
 }

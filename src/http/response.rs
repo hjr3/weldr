@@ -1,7 +1,8 @@
-use std::ascii::AsciiExt;
-use std::{io, slice, str};
+use std::{io, str};
 
 use tokio_core::io::EasyBuf;
+
+use super::{Slice, Headers};
 
 use httparse;
 
@@ -12,8 +13,6 @@ pub struct Response {
     data: EasyBuf,
 }
 
-type Slice = (usize, usize);
-
 impl Response {
 
     pub fn status_code(&self) -> u16 {
@@ -21,41 +20,22 @@ impl Response {
     }
 
     pub fn content_length(&self) -> Option<usize> {
-        self.headers()
-            .find(|h| h.0.to_ascii_lowercase().as_str() == "content-length")
-            .and_then(|h| {
-                let v = ::std::str::from_utf8(&h.1).unwrap();
-                v.parse::<usize>().ok()
-            })
+        self.headers().content_length()
     }
 
     pub fn transfer_encoding_chunked(&self) -> bool {
-        match self.headers()
-            .find(|h| h.0.to_ascii_lowercase().as_str() == "transfer-encoding") {
-
-            Some(h) => {
-                let v = ::std::str::from_utf8(&h.1).unwrap();
-                v.to_ascii_lowercase() == "chunked"
-            }
-            None => {
-                 false
-            }
-        }
+        self.headers().transfer_encoding_chunked()
     }
 
     pub fn append_data(&mut self, buf: &[u8]) {
         self.data.get_mut().extend_from_slice(buf);
     }
 
-    fn headers(&self) -> ResponseHeaders {
-        ResponseHeaders {
+    fn headers(&self) -> Headers {
+        Headers {
             headers: self.headers.iter(),
-            res: self,
+            data: &self.data,
         }
-    }
-
-    fn slice(&self, slice: &Slice) -> &[u8] {
-        &self.data.as_slice()[slice.0..slice.1]
     }
 }
 
@@ -101,21 +81,4 @@ pub fn decode(buf: &mut EasyBuf) -> io::Result<Option<Response>> {
 
 pub fn encode(msg: Response, buf: &mut Vec<u8>) {
     buf.extend_from_slice(msg.data.as_ref());
-}
-
-pub struct ResponseHeaders<'res> {
-    headers: slice::Iter<'res, (Slice, Slice)>,
-    res: &'res Response,
-}
-
-impl<'res> Iterator for ResponseHeaders<'res> {
-    type Item = (&'res str, &'res [u8]);
-
-    fn next(&mut self) -> Option<(&'res str, &'res [u8])> {
-        self.headers.next().map(|&(ref a, ref b)| {
-            let a = self.res.slice(a);
-            let b = self.res.slice(b);
-            (str::from_utf8(a).unwrap(), b)
-        })
-    }
 }
