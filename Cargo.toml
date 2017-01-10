@@ -8,17 +8,19 @@ authors = ["Herman J. Radtke III <herman@hermanradtke.com>"]
 log = "0.3"
 env_logger = "0.3.1"
 futures = "0.1.1"
-tokio-core = "0.1.0"
-tokio-proto = { git = "https://github.com/tokio-rs/tokio-proto" }
+hyper = { git = "https://github.com/hyperium/hyper", branch = "tokio" }
+tokio-core = "0.1"
 tokio-service = { git = "https://github.com/tokio-rs/tokio-service" }
-tokio-timer = { git = "https://github.com/tokio-rs/tokio-timer" }
-httparse = "1.1.2"
 
-rustful = "0.9"
 rustc-serialize = "0.3.19"
 
+[dependencies.rustful]
+version = "0.9"
+default-features = false
+features = ["rustc_json_body"]
+
 [dev-dependencies]
-hyper = "0.9"
+reqwest = "0.2.0"
 
 [[bin]]
 name = "alacrity"

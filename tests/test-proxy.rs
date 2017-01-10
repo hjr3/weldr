@@ -1,102 +1,143 @@
-extern crate hyper;
-extern crate alacrity;
 extern crate env_logger;
 #[macro_use] extern crate log;
+extern crate futures;
+extern crate tokio_core;
+extern crate hyper;
+extern crate alacrity;
+extern crate reqwest;
 
-use hyper::server::{Server, Request, Response, Handler};
-use hyper::header::{ContentLength, ContentEncoding, Encoding};
-use hyper::Client;
-use std::io::{Read, Write};
+use std::io::Read;
 use std::net::SocketAddr;
+use std::sync::mpsc::channel;
+use std::thread;
+
+use hyper::{Get, Post, StatusCode};
+use hyper::server::{Server, Service, Request, Response};
+use hyper::header::{ContentLength, TransferEncoding};
+
 use alacrity::pool::Pool;
-use std::{thread, time};
 
+#[derive(Clone, Copy)]
+struct Origin;
 
-fn with_server<H: Handler + 'static, R>(handle: H, proxy_port: u16, test: &Fn(u16) -> R) -> R {
-    let mut server = Server::http("127.0.0.1:0").unwrap().handle(handle).unwrap();
-    let port = server.socket.port();
-    let server_addr = server.socket;
+impl Service for Origin {
+    type Request = Request;
+    type Response = Response;
+    type Error = hyper::Error;
+    type Future = ::futures::Finished<Response, hyper::Error>;
 
-    // test directly against http server
-    test(port);
-
-    // test against proxy
-    thread::spawn(move || {
-        // TODO: it would be more convenient to use the port 0 to let the kernel pick one free port for us
-        // https://github.com/hjr3/alacrity/issues/12
-        let proxy_addr = format!("127.0.0.1:{}", proxy_port);
-        let addr = proxy_addr.parse::<SocketAddr>().unwrap();
-        let pool = Pool::with_servers(vec![server_addr]);
-        alacrity::proxy::listen(addr, pool.clone()).expect("Failed to start server");
-    });
-    // TODO: need a better way to wait for proxy to be up
-    thread::sleep(time::Duration::from_millis(50));
-
-    let result_proxy = test(proxy_port);
-
-    // TODO: close proxy - https://github.com/hjr3/alacrity/issues/11
-    // TODO: close previously created thread
-    server.close().unwrap();
-    result_proxy
-}
-
-fn url(port: u16) -> String {
-    format!("http://localhost:{}", port)
-}
-
-
-#[test]
-fn method_on_http_server() {
-    use hyper::method::Method;
-    use std::str::FromStr;
-
-    fn hello_request_method(req: Request, mut res: Response) {
-        let body = format!("hello {}", req.method);
-        res.headers_mut().set(ContentLength(body.len() as u64));
-        let mut res = res.start().unwrap();
-        res.write_all(body.as_ref()).unwrap();
+    fn call(&self, req: Request) -> Self::Future {
+        ::futures::finished(match (req.method(), req.path()) {
+            (&Get, Some("/")) => {
+                let body = "Hello World";
+                Response::new()
+                    .with_header(ContentLength(body.len() as u64))
+                    .with_body(body)
+            },
+            (_, Some("/method")) => {
+                let body = format!("hello {}", req.method());
+                Response::new()
+                    .with_header(ContentLength(body.len() as u64))
+                    .with_body(body)
+            },
+            (&Post, Some("/echo")) => {
+                let mut res = Response::new();
+                if let Some(len) = req.headers().get::<ContentLength>() {
+                    res.headers_mut().set(len.clone());
+                }
+                res.with_body(req.body())
+            },
+            (_, Some("/chunked")) => {
+                Response::new()
+                    .with_header(TransferEncoding::chunked())
+                    .with_body("Hello Chunky World!")
+            },
+            _ => {
+                Response::new()
+                    .with_status(StatusCode::NotFound)
+            }
+        })
     }
+}
 
+/// Send a request through the proxy and get back a response.
+///
+/// The client request is to created via the callback. The callback provides the host so the client
+/// can connect to the correct proxy.
+fn with_server<R> (req: R) where R: Fn(String)
+{
     let _ = env_logger::init();
 
-    let methods = vec!("GET", "DELETE", "PATCH", "OPTIONS", "POST", "PUT", "TRACE", "HEAD", "CONNECT", "GARBAGE");
-    let port = 8081;
+    let pool = Pool::with_servers(vec![]);
 
-    for (i, method) in methods.iter().enumerate() {
-        with_server(hello_request_method, port + i as u16, &|port| {
-            let client = Client::new();
-            let url = url(port);
-            let mut res = client.request(Method::from_str(&method).unwrap(), &url).send().unwrap();
-            assert_eq!(res.status, hyper::Ok);
+    let addr = "127.0.0.1:0".parse::<SocketAddr>().unwrap();
+    let (_, proxy) = alacrity::proxy::listen(addr, pool.clone()).expect("Failed to start server");
 
-            // missing HEAD, CONNECT as the server cannot return any body
+    let (tx, rx) = channel();
+    thread::spawn(move || {
+        let addr = "127.0.0.1:0".parse::<SocketAddr>().unwrap();
+        let (listening, server) = Server::standalone(|tokio| {
+            Server::http(&addr, tokio)?
+                .handle(|| Ok(Origin), tokio)
+        }).unwrap();
+        tx.send(listening).unwrap();
+        server.run();
+    });
+
+    let origin = rx.recv().unwrap();
+    pool.add(*origin.addr());
+
+    req(format!("http://localhost:{}", origin.addr().port()));
+
+    proxy.close();
+    origin.close();
+}
+
+#[test]
+fn test_method_on_http_server() {
+    use reqwest::Method;
+    use std::str::FromStr;
+
+    let methods = vec!("GET", "DELETE", "PATCH", "OPTIONS", "POST", "PUT", "TRACE", "HEAD", "CONNECT");
+    for method in methods.iter() {
+        with_server(|host| {
+
+            let h_method = Method::from_str(&method).unwrap();
+            let url = format!("{}{}", host, "/method");
+            let client = reqwest::Client::new().expect("client failed to construct");
+            let mut res = client.request(h_method, &url).send().unwrap();
+
+            debug!("Response: {}", res.status());
+            debug!("Headers: \n{}", res.headers());
+
+            assert_eq!(res.status(), &reqwest::StatusCode::Ok);
+
+            // HEAD, CONNECT cannot return any body
             if *method != "HEAD" && *method != "CONNECT" {
                 let mut body = String::new();
                 res.read_to_string(&mut body).unwrap();
                 let expected = format!("hello {}", method);
-                assert_eq!(body, expected);
+                assert_eq!(expected, body);
+            } else {
+                let mut body = String::new();
+                res.read_to_string(&mut body).unwrap();
+                assert_eq!("".to_string(), body);
             }
         });
-    };
+    }
 }
 
 #[test]
-fn request_body() {
-    fn hello_request_body(mut req: Request, mut res: Response) {
-        let mut body = String::new();
-        req.read_to_string(&mut body).unwrap();
-        res.headers_mut().set(ContentLength(body.len() as u64));
-        let mut res = res.start().unwrap();
-        res.write_all(body.as_ref()).unwrap();
-    }
+fn test_request_body() {
+    with_server(|host| {
 
-    let _ = env_logger::init();
+        let url = format!("{}{}", host, "/echo");
+        let client = reqwest::Client::new().expect("client failed to construct");
+        let mut res = client.post(&url)
+            .body("hello")
+            .send().unwrap();
 
-    with_server(hello_request_body, 8101, &|port| {
-        let client = Client::new();
-        let url = url(port);
-        let mut res = client.post(&url).body("hello").send().unwrap();
-        assert_eq!(res.status, hyper::Ok);
+        assert_eq!(res.status(), &reqwest::StatusCode::Ok);
 
         let mut body = String::new();
         res.read_to_string(&mut body).unwrap();
@@ -105,25 +146,18 @@ fn request_body() {
 }
 
 #[test]
-fn response_body_streaming() {
-    fn hello_request_body(_: Request, mut res: Response) {
-        res.headers_mut().set(ContentEncoding(vec![Encoding::Chunked]));
-        let mut res = res.start().unwrap();
-        res.write_all(b"Hello World!").unwrap();
-    }
+fn test_response_body_streaming() {
+    with_server(|host| {
+        let url = format!("{}{}", host, "/chunked");
+        let mut res = reqwest::get(&url).unwrap();
 
-    let _ = env_logger::init();
+        assert_eq!(res.status(), &reqwest::StatusCode::Ok);
 
-    with_server(hello_request_body, 8102, &|port| {
-        let client = Client::new();
-        let url = url(port);
-        let mut res = client.get(&url).send().unwrap();
-        assert_eq!(res.status, hyper::Ok);
-
-        assert_eq!(res.headers.get::<ContentEncoding>(), Some(&ContentEncoding(vec![Encoding::Chunked])));
+        assert_eq!(res.headers().get::<reqwest::header::TransferEncoding>(),
+            Some(&reqwest::header::TransferEncoding(vec![reqwest::header::Encoding::Chunked])));
 
         let mut body = String::new();
         res.read_to_string(&mut body).unwrap();
-        assert_eq!(body, "Hello World!");
+        assert_eq!(body, "Hello Chunky World!");
     });
 }
