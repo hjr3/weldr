@@ -1,6 +1,5 @@
 extern crate env_logger;
 extern crate alacrity;
-extern crate tokio_proto;
 
 use std::env;
 use std::net::SocketAddr;
@@ -26,5 +25,6 @@ fn main() {
         mgmt::listen(admin_addr, p);
     }).expect("Failed to create proxy thread");
 
-    alacrity::proxy::listen(addr, pool.clone()).expect("Failed to start server");
+    let (handle, _) = alacrity::proxy::listen(addr, pool.clone()).expect("Failed to start server");
+    handle.join().unwrap();
 }
