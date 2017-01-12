@@ -6,10 +6,11 @@ extern crate hyper;
 extern crate alacrity;
 extern crate reqwest;
 
-use std::io::Read;
-use std::net::SocketAddr;
+use std::io::{Read, Write};
+use std::net::{TcpStream, SocketAddr};
 use std::sync::mpsc::channel;
 use std::thread;
+use std::time::Duration;
 
 use hyper::{Get, Post, StatusCode};
 use hyper::server::{Server, Service, Request, Response};
@@ -87,10 +88,20 @@ fn with_server<R> (req: R) where R: Fn(String)
     let origin = rx.recv().unwrap();
     pool.add(*origin.addr());
 
-    req(format!("http://localhost:{}", origin.addr().port()));
+    req(format!("http://127.0.0.1:{}", origin.addr().port()));
 
     proxy.close();
     origin.close();
+}
+
+/// Utility function for creating a raw request to the proxy
+fn connect(host: &str) -> TcpStream {
+    // strip out the "http://"
+    let addr: SocketAddr = host[7..].parse().unwrap();
+    let req = TcpStream::connect(&addr).unwrap();
+    req.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+    req.set_write_timeout(Some(Duration::from_secs(1))).unwrap();
+    req
 }
 
 #[test]
@@ -142,6 +153,31 @@ fn test_request_body() {
         let mut body = String::new();
         res.read_to_string(&mut body).unwrap();
         assert_eq!(body, "hello");
+    });
+}
+
+#[test]
+fn test_request_and_response_body_chunked() {
+    with_server(|host| {
+
+        // reqwest does not currently support chunked requests
+        let mut req = connect(&host);
+        req.write_all(b"\
+            POST /echo HTTP/1.1\r\n\
+            Host: www.example.com\r\n\
+            Accept: */*\r\n\
+            Connection: close\r\n\
+            Transfer-Encoding: chunked\r\n\
+            \r\n\
+            5\r\n\
+            hello\r\n\
+            0\r\n\r\n\
+        ").expect("Raw request failed");
+        let mut body = String::new();
+        req.read_to_string(&mut body).expect("Raw response failed");
+        let n = body.find("\r\n\r\n").unwrap() + 4;
+
+        assert_eq!(&body[n..], "5\r\nhello\r\n0\r\n\r\n");
     });
 }
 
