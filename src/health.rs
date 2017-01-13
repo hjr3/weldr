@@ -34,7 +34,7 @@ impl HealthCheck {
         let work = timer.interval(self.interval).for_each(move |()| {
             let servers = pool.all();
             for server in servers {
-                let url = format!("http://{}{}", server.addr(), self.uri_path);
+                let url = format!("{}://{}{}", server.protocol(), server.addr(), self.uri_path);
                 let url = Url::parse(&url).unwrap();
                 debug!("Health check {:?}", url);
 

@@ -1,5 +1,6 @@
-use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
+use std::str::FromStr;
+use std::net::{AddrParseError, IpAddr, SocketAddr};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Stats {
@@ -35,17 +36,27 @@ impl Stats {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Server {
     addr: SocketAddr,
+    secured: bool,
     hc_failure: usize,
     stats: Stats,
 }
 
 impl Server {
-    pub fn new(addr: SocketAddr) -> Server {
+    pub fn new(addr: SocketAddr, secured: bool) -> Server {
         Server {
             addr: addr,
+            secured: secured,
             hc_failure: 0,
             stats: Stats::new(),
         }
+    }
+
+    pub fn ip(&self) -> IpAddr {
+        self.addr.ip()
+    }
+
+    pub fn port(&self) -> u16 {
+        self.addr.port()
     }
 
     pub fn stats_mut(&mut self) -> &mut Stats {
@@ -54,6 +65,29 @@ impl Server {
 
     pub fn addr(&self) -> &SocketAddr {
         &self.addr
+    }
+
+    pub fn secured(&self) -> bool {
+        self.secured
+    }
+
+    pub fn protocol(&self) -> &str {
+        if self.secured { "https" } else { "http" }
+    }
+}
+
+impl FromStr for Server {
+    type Err = AddrParseError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let (secured, to_parse) = if s.starts_with("https://") {
+            (true, &s[8..])
+        } else if s.starts_with("http://") {
+            (false, &s[7..])
+        } else {
+            (false, s)
+        };
+
+        FromStr::from_str(to_parse).map(|addr| Server::new(addr, secured))
     }
 }
 
@@ -97,7 +131,7 @@ impl Pool {
     ///
     /// Currently, it is possible to add the same server more then once
     pub fn add(&self, backend: SocketAddr) {
-        let server = Server::new(backend);
+        let server = Server::new(backend, false);
         self.inner.write().expect("Lock is poisoned").add(server)
     }
 
@@ -161,12 +195,31 @@ pub mod inner {
         use super::Pool;
         use super::Server;
         use std::str::FromStr;
+        use std::net::{IpAddr, Ipv4Addr};
+
+        #[test]
+        fn test_from_str() {
+            let backend1: Server = FromStr::from_str("http://127.0.0.1:6000").unwrap();
+            assert_eq!(backend1.ip(), IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
+            assert_eq!(backend1.port(), 6000);
+            assert_eq!(backend1.secured, false);
+
+            let backend2: Server = FromStr::from_str("https://10.10.10.10:1010").unwrap();
+            assert_eq!(backend2.ip(), IpAddr::V4(Ipv4Addr::new(10, 10, 10, 10)));
+            assert_eq!(backend2.port(), 1010);
+            assert_eq!(backend2.secured, true);
+
+            let backend3: Server = FromStr::from_str("8.8.8.8:6543").unwrap();
+            assert_eq!(backend3.ip(), IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)));
+            assert_eq!(backend3.port(), 6543);
+            assert_eq!(backend3.secured, false);
+        }
 
         #[test]
         fn test_rrb_backend() {
             let backends: Vec<Server> = vec![
-                Server::new(FromStr::from_str("127.0.0.1:6000").unwrap()),
-                Server::new(FromStr::from_str("127.0.0.1:6001").unwrap()),
+                FromStr::from_str("127.0.0.1:6000").unwrap(),
+                FromStr::from_str("127.0.0.1:6001").unwrap(),
             ];
 
             let mut rrb = Pool::new(backends);
@@ -194,7 +247,7 @@ pub mod inner {
         fn test_add_to_rrb_backend() {
             let mut rrb = Pool::new(vec![]);
             assert!(rrb.get().is_none());
-            let server = Server::new(FromStr::from_str("127.0.0.1:6000").unwrap());
+            let server: Server = FromStr::from_str("127.0.0.1:6000").unwrap();
             rrb.add(server.clone());
             assert!(rrb.get().is_some());
             assert_eq!(vec![server], rrb.all());
@@ -203,14 +256,14 @@ pub mod inner {
         #[test]
         fn test_remove_from_rrb_backend() {
             let mut rrb = Pool::new(vec![]);
-            let server1 = Server::new(FromStr::from_str("127.0.0.1:6000").unwrap());
-            let server2 = Server::new(FromStr::from_str("127.0.0.1:6001").unwrap());
+            let server1: Server = FromStr::from_str("127.0.0.1:6000").unwrap();
+            let server2: Server = FromStr::from_str("127.0.0.1:6001").unwrap();
             rrb.add(server1.clone());
             rrb.add(server2.clone());
             assert_eq!(2, rrb.backends.len());
             assert_eq!(vec![server1.clone(), server2.clone()], rrb.all());
 
-            let unknown_server = Server::new(FromStr::from_str("127.0.0.1:1234").unwrap());
+            let unknown_server: Server = FromStr::from_str("127.0.0.1:1234").unwrap();
             rrb.remove(&unknown_server);
             assert_eq!(2, rrb.backends.len());
             assert_eq!(vec![server1.clone(), server2.clone()], rrb.all());

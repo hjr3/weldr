@@ -8,10 +8,11 @@ use futures::{Future, Stream};
 use tokio_core::reactor::Core;
 use tokio_core::net::TcpListener;
 use hyper::{self, Headers, Client, HttpVersion};
-use hyper::client::{self, HttpConnector};
+use hyper::client;
 use hyper::client::Service;
 use hyper::header;
 use hyper::server::{self, Http};
+use hyper_tls::HttpsConnector;
 
 use pool::Pool;
 
@@ -146,7 +147,7 @@ fn map_response(res: client::Response) -> server::Response {
 }
 
 struct Proxy {
-    client: Client<HttpConnector>,
+    client: Client<HttpsConnector>,
     pool: Pool,
 }
 
@@ -158,7 +159,7 @@ impl Service for Proxy {
 
     fn call(&self, req: server::Request) -> Self::Future {
         let server = self.pool.get().expect("Failed to get server from pool");
-        let url = format!("http://{}{}", server.addr(), req.path());
+        let url = format!("{}://{}{}", server.protocol(), server.addr(), req.path());
         debug!("Preparing backend request to {:?}", url);
 
         let client_req = map_request(req, &url);
@@ -188,16 +189,17 @@ pub fn listen(addr: SocketAddr, pool: Pool) -> result::Result<thread::JoinHandle
         let listener = TcpListener::bind(&addr, &handle).unwrap();
         info!("Listening on http://{}", &addr);
 
-        let handle2 = handle.clone();
         let work = listener.incoming().for_each(move |(socket, addr)| {
-            let client = Client::new(&handle2.clone());
+            let client = Client::configure()
+                .connector(HttpsConnector::new(4, &handle))
+                .build(&handle);
             let service = Proxy {
                 client: client,
                 pool: pool.clone(),
             };
 
             let http = Http::new();
-            http.bind_connection(&handle2, socket, addr, service);
+            http.bind_connection(&handle, socket, addr, service);
             Ok(())
         });
 
