@@ -12,7 +12,9 @@ fn index(_context: Context, response: Response) {
 }
 
 fn large(_context: Context, response: Response) {
-    let path = Path::new("/Users/herman/tmp/akamai-logs.txt");
+    let pwd = env!("CARGO_MANIFEST_DIR");
+    let path = format!("{}/tests/jquery-1.7.1.min.js", pwd);
+    let path = Path::new(&path);
 
     let _ = response.send_file(path)
         .or_else(|e| e.send_not_found("the file was not found"))
