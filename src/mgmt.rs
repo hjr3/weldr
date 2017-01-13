@@ -126,6 +126,7 @@ fn remove_server(context: Context, response: Response) {
 }
 
 pub fn listen(addr: SocketAddr, pool: Pool) {
+    info!("Starting administration server listening on http://{}", &addr);
     Server {
         host: addr.into(),
         handlers: insert_routes!{
