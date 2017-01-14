@@ -6,7 +6,7 @@ use std::thread;
 
 use futures::Future;
 use hyper::{self, Headers, Client, HttpVersion};
-use hyper::client;
+use hyper::client::{self, DefaultConnector};
 use hyper::header;
 use hyper::server::{self, Server, Service, Listening};
 use tokio_core::reactor::Handle;
@@ -145,7 +145,7 @@ fn map_response(res: client::Response) -> server::Response {
 }
 
 struct Proxy {
-    handle: Handle,
+    client: Client<DefaultConnector>,
     pool: Pool,
 }
 
@@ -162,9 +162,7 @@ impl Service for Proxy {
 
         let client_req = map_request(req, &url);
 
-        // TODO store client in Proxy object
-        let client = Client::new(&self.handle.clone());
-        let backend = client.call(client_req).and_then(|res| {
+        let backend = self.client.call(client_req).and_then(|res| {
             debug!("Response: {}", res.status());
             debug!("Headers: \n{}", res.headers());
 
@@ -192,8 +190,9 @@ impl NewService for NewProxyService {
     type Instance = Proxy;
 
     fn new_service(&self) -> io::Result<Self::Instance> {
+        let client: Client<DefaultConnector> = Client::new(&self.handle.clone());
         Ok(Proxy {
-            handle: self.handle.clone(),
+            client: client,
             pool: self.pool.clone(),
         })
     }
