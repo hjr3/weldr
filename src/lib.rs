@@ -1,7 +1,7 @@
 extern crate futures;
 #[macro_use] extern crate log;
 extern crate env_logger;
-extern crate hyper;
+#[macro_use] extern crate hyper;
 #[macro_use] extern crate rustful;
 extern crate rustc_serialize;
 extern crate tokio_core;
