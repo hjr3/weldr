@@ -13,7 +13,7 @@ use std::thread;
 use std::time::Duration;
 
 use hyper::{Get, Post, StatusCode};
-use hyper::server::{Server, Service, Request, Response};
+use hyper::server::{Http, Service, Request, Response};
 use hyper::header::{ContentLength, TransferEncoding};
 
 use alacrity::pool::Pool;
@@ -29,26 +29,26 @@ impl Service for Origin {
 
     fn call(&self, req: Request) -> Self::Future {
         ::futures::finished(match (req.method(), req.path()) {
-            (&Get, Some("/")) => {
+            (&Get, "/") => {
                 let body = "Hello World";
                 Response::new()
                     .with_header(ContentLength(body.len() as u64))
                     .with_body(body)
             },
-            (_, Some("/method")) => {
+            (_, "/method") => {
                 let body = format!("hello {}", req.method());
                 Response::new()
                     .with_header(ContentLength(body.len() as u64))
                     .with_body(body)
             },
-            (&Post, Some("/echo")) => {
+            (&Post, "/echo") => {
                 let mut res = Response::new();
                 if let Some(len) = req.headers().get::<ContentLength>() {
                     res.headers_mut().set(len.clone());
                 }
                 res.with_body(req.body())
             },
-            (_, Some("/chunked")) => {
+            (_, "/chunked") => {
                 Response::new()
                     .with_header(TransferEncoding::chunked())
                     .with_body("Hello Chunky World!")
@@ -72,26 +72,22 @@ fn with_server<R> (req: R) where R: Fn(String)
     let pool = Pool::with_servers(vec![]);
 
     let addr = "127.0.0.1:0".parse::<SocketAddr>().unwrap();
-    let (_, proxy) = alacrity::proxy::listen(addr, pool.clone()).expect("Failed to start server");
+    let _h1 = alacrity::proxy::listen(addr, pool.clone()).expect("Failed to start server");
 
     let (tx, rx) = channel();
-    thread::spawn(move || {
+    let _h2 = thread::spawn(move || {
         let addr = "127.0.0.1:0".parse::<SocketAddr>().unwrap();
-        let (listening, server) = Server::standalone(|tokio| {
-            Server::http(&addr, tokio)?
-                .handle(|| Ok(Origin), tokio)
-        }).unwrap();
-        tx.send(listening).unwrap();
-        server.run();
+
+
+        let server = Http::new().bind(&addr, || Ok(Origin)).unwrap();
+        tx.send(server.local_addr().unwrap()).unwrap();
+        server.run().unwrap();
     });
 
     let origin = rx.recv().unwrap();
-    pool.add(*origin.addr());
+    pool.add(origin);
 
-    req(format!("http://127.0.0.1:{}", origin.addr().port()));
-
-    proxy.close();
-    origin.close();
+    req(format!("http://127.0.0.1:{}", origin.port()));
 }
 
 /// Utility function for creating a raw request to the proxy

@@ -8,7 +8,7 @@ authors = ["Herman J. Radtke III <herman@hermanradtke.com>"]
 log = "0.3"
 env_logger = "0.3.1"
 futures = "0.1.1"
-hyper = { git = "https://github.com/hyperium/hyper", branch = "tokio" }
+hyper = { git = "https://github.com/hyperium/hyper" }
 tokio-core = "0.1"
 tokio-service = { git = "https://github.com/tokio-rs/tokio-service" }
 

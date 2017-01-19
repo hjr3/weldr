@@ -4,13 +4,14 @@ use std::result;
 use std::str;
 use std::thread;
 
-use futures::Future;
+use futures::{Future, Stream};
+use tokio_core::reactor::Core;
+use tokio_core::net::TcpListener;
 use hyper::{self, Headers, Client, HttpVersion};
-use hyper::client::{self, DefaultConnector};
+use hyper::client::{self, HttpConnector};
+use hyper::client::Service;
 use hyper::header;
-use hyper::server::{self, Server, Service, Listening};
-use tokio_core::reactor::Handle;
-use tokio_service::NewService;
+use hyper::server::{self, Http};
 
 use pool::Pool;
 
@@ -145,7 +146,7 @@ fn map_response(res: client::Response) -> server::Response {
 }
 
 struct Proxy {
-    client: Client<DefaultConnector>,
+    client: Client<HttpConnector>,
     pool: Pool,
 }
 
@@ -157,7 +158,7 @@ impl Service for Proxy {
 
     fn call(&self, req: server::Request) -> Self::Future {
         let addr = self.pool.get().expect("Failed to get address from pool");
-        let url = format!("http://{}{}", addr, req.path().unwrap());
+        let url = format!("http://{}{}", addr, req.path());
         debug!("Preparing backend request to {:?}", url);
 
         let client_req = map_request(req, &url);
@@ -178,47 +179,33 @@ impl Service for Proxy {
     }
 }
 
-struct NewProxyService {
-    handle: Handle,
-    pool: Pool,
-}
-
-impl NewService for NewProxyService {
-    type Request = server::Request;
-    type Response = server::Response;
-    type Error = hyper::Error;
-    type Instance = Proxy;
-
-    fn new_service(&self) -> io::Result<Self::Instance> {
-        let client: Client<DefaultConnector> = Client::new(&self.handle.clone());
-        Ok(Proxy {
-            client: client,
-            pool: self.pool.clone(),
-        })
-    }
-}
-
-pub fn listen(addr: SocketAddr, pool: Pool) -> result::Result<(thread::JoinHandle<()>, Listening), io::Error> {
-    let (tx, rx) = ::std::sync::mpsc::channel();
-
+pub fn listen(addr: SocketAddr, pool: Pool) -> result::Result<thread::JoinHandle<()>, io::Error> {
     let handle = thread::spawn(move || {
-        let (listening, server) = Server::standalone(|tokio_handle| {
-            let new_service = NewProxyService {
-                handle: tokio_handle.clone(),
+
+        let mut core = Core::new().unwrap();
+        let handle = core.handle();
+
+        let listener = TcpListener::bind(&addr, &handle).unwrap();
+        info!("Listening on http://{}", &addr);
+
+        let handle2 = handle.clone();
+        let work = listener.incoming().for_each(move |(socket, addr)| {
+            let client = Client::new(&handle2.clone());
+            let service = Proxy {
+                client: client,
                 pool: pool.clone(),
             };
 
-            Server::http(&addr, tokio_handle)?
-                .handle(new_service, tokio_handle)
-        }).unwrap();
+            let http = Http::new();
+            http.bind_connection(&handle2, socket, addr, service);
+            Ok(())
+        });
 
-        info!("Listening on http://{}", listening);
-
-        tx.send(listening).unwrap();
-        server.run();
+        core.run(work).unwrap();
     });
 
-    Ok((handle, rx.recv().unwrap()))
+
+    Ok(handle)
 }
 
 #[cfg(test)]

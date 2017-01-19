@@ -25,6 +25,6 @@ fn main() {
         mgmt::listen(admin_addr, p);
     }).expect("Failed to create proxy thread");
 
-    let (handle, _) = alacrity::proxy::listen(addr, pool.clone()).expect("Failed to start server");
+    let handle = alacrity::proxy::listen(addr, pool.clone()).expect("Failed to start server");
     handle.join().unwrap();
 }
