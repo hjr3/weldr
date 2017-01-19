@@ -1,6 +1,62 @@
 use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Stats {
+    failure: usize,
+    success: usize,
+}
+
+impl Stats {
+    pub fn new() -> Stats {
+        Stats {
+            failure: 0,
+            success: 0,
+        }
+    }
+
+    pub fn inc_success(&mut self) {
+        self.success += 1;
+    }
+
+    pub fn inc_failure(&mut self) {
+        self.failure += 1;
+    }
+
+    pub fn success(&self) -> usize {
+        self.success
+    }
+
+    pub fn failure(&self) -> usize {
+        self.failure
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Server {
+    addr: SocketAddr,
+    hc_failure: usize,
+    stats: Stats,
+}
+
+impl Server {
+    pub fn new(addr: SocketAddr) -> Server {
+        Server {
+            addr: addr,
+            hc_failure: 0,
+            stats: Stats::new(),
+        }
+    }
+
+    pub fn stats_mut(&mut self) -> &mut Stats {
+        &mut self.stats
+    }
+
+    pub fn addr(&self) -> &SocketAddr {
+        &self.addr
+    }
+}
+
 /// A round-robin pool for servers
 ///
 /// A simple pool that stores socket addresses and, for now, clones them out.
@@ -12,7 +68,7 @@ pub struct Pool {
 }
 
 impl Pool {
-    pub fn with_servers(backends: Vec<SocketAddr>) -> Pool {
+    pub fn with_servers(backends: Vec<Server>) -> Pool {
         let inner = inner::Pool::new(backends);
 
         Pool {
@@ -20,64 +76,69 @@ impl Pool {
         }
     }
 
-    /// Get a `SocketAddr` from the pool
+    pub fn new() -> Pool {
+        Pool::with_servers(vec![])
+    }
+
+    /// Get a `Server` from the pool
     ///
     /// The pool may be exhausted of eligible addresses to connect to. The client is expected to
     /// handle this scenario.
-    pub fn get(&self) -> Option<SocketAddr> {
+    pub fn get(&self) -> Option<Server> {
         self.inner.write().expect("Lock is poisoned").get()
     }
 
-    /// Returns all `SocketAddr` from the pool
-    pub fn all(&self) -> Vec<SocketAddr> {
+    /// Returns all `Server` from the pool
+    pub fn all(&self) -> Vec<Server> {
         self.inner.write().expect("Lock is poisoned").all()
     }
 
-    /// Add a new socket (IP address and port) to the pool
+    /// Add a new server to the pool
     ///
-    /// Currently, it is possible to add the same socket more then once
+    /// Currently, it is possible to add the same server more then once
     pub fn add(&self, backend: SocketAddr) {
-        self.inner.write().expect("Lock is poisoned").add(backend)
+        let server = Server::new(backend);
+        self.inner.write().expect("Lock is poisoned").add(server)
     }
 
-    /// Remove a socket from the pool
+    /// Remove a server from the pool
     ///
-    /// This will remove all instance of the given socket. See `add` method for details on
-    /// duplicate sockets.
-    pub fn remove(&self, backend: &SocketAddr) {
+    /// This will remove all instance of the given server. See `add` method for details on
+    /// duplicate servers.
+    pub fn remove(&self, backend: &Server) {
         self.inner.write().expect("Lock is poisoned").remove(backend)
     }
 }
 
 pub mod inner {
-    use std::net::SocketAddr;
+    use super::Server;
 
     pub struct Pool {
-        backends: Vec<SocketAddr>,
+        backends: Vec<Server>,
         last_used: usize,
     }
 
     impl Pool {
-        pub fn new(backends: Vec<SocketAddr>) -> Pool {
+        pub fn new(backends: Vec<Server>) -> Pool {
             Pool {
                 backends: backends,
                 last_used: 0,
             }
         }
 
-        pub fn get(&mut self) -> Option<SocketAddr> {
+        pub fn get(&mut self) -> Option<Server> {
             if self.backends.is_empty() {
                 warn!("Pool is exhausted of socket addresses");
                 return None;
             }
             self.last_used = (self.last_used + 1) % self.backends.len();
-            self.backends.get(self.last_used).map(|&addr| {
-                debug!("Pool is cloaning (hehe) out {}", addr);
-                addr.clone()
+            self.backends.get(self.last_used).map(|server| {
+                debug!("Pool is cloaning (hehe) out {:?}", server);
+                server.clone()
             })
         }
 
-        pub fn all(&mut self) -> Vec<SocketAddr> {
+        pub fn all(&mut self) -> Vec<Server> {
             if self.backends.is_empty() {
                 warn!("Pool is exhausted of socket addresses");
                 return Vec::new();
@@ -85,12 +146,12 @@ pub mod inner {
             self.backends.clone()
         }
 
-        pub fn add(&mut self, backend: SocketAddr) {
-            self.backends.push(backend);
+        pub fn add(&mut self, server: Server) {
+            self.backends.push(server);
         }
 
-        pub fn remove(&mut self, backend: &SocketAddr) {
-            self.backends.retain(|&addr| &addr != backend);
+        pub fn remove(&mut self, server: &Server) {
+            self.backends.retain(|s| s != server);
         }
     }
 
@@ -98,26 +159,26 @@ pub mod inner {
     #[cfg(test)]
     mod tests {
         use super::Pool;
-        use std::net::SocketAddr;
+        use super::Server;
         use std::str::FromStr;
 
         #[test]
         fn test_rrb_backend() {
-            let backends: Vec<SocketAddr> = vec![
-                FromStr::from_str("127.0.0.1:6000").unwrap(),
-                FromStr::from_str("127.0.0.1:6001").unwrap(),
+            let backends: Vec<Server> = vec![
+                Server::new(FromStr::from_str("127.0.0.1:6000").unwrap()),
+                Server::new(FromStr::from_str("127.0.0.1:6001").unwrap()),
             ];
 
             let mut rrb = Pool::new(backends);
             assert_eq!(2, rrb.backends.len());
 
-            let first_socket_addr = rrb.get().unwrap();
-            let second_socket_addr = rrb.get().unwrap();
-            let third_socket_addr = rrb.get().unwrap();
-            let fourth_socket_addr = rrb.get().unwrap();
-            assert_eq!(first_socket_addr, third_socket_addr);
-            assert_eq!(second_socket_addr, fourth_socket_addr);
-            assert!(first_socket_addr != second_socket_addr);
+            let first = rrb.get().unwrap();
+            let second = rrb.get().unwrap();
+            let third = rrb.get().unwrap();
+            let fourth = rrb.get().unwrap();
+            assert_eq!(first, third);
+            assert_eq!(second, fourth);
+            assert!(first != second);
         }
 
         #[test]
@@ -133,32 +194,32 @@ pub mod inner {
         fn test_add_to_rrb_backend() {
             let mut rrb = Pool::new(vec![]);
             assert!(rrb.get().is_none());
-            let addr: SocketAddr = FromStr::from_str("127.0.0.1:6000").unwrap();
-            rrb.add(addr);
+            let server = Server::new(FromStr::from_str("127.0.0.1:6000").unwrap());
+            rrb.add(server.clone());
             assert!(rrb.get().is_some());
-            assert_eq!(vec![addr], rrb.all());
+            assert_eq!(vec![server], rrb.all());
         }
 
         #[test]
         fn test_remove_from_rrb_backend() {
             let mut rrb = Pool::new(vec![]);
-            let addr1: SocketAddr = FromStr::from_str("127.0.0.1:6000").unwrap();
-            let addr2: SocketAddr = FromStr::from_str("127.0.0.1:6001").unwrap();
-            rrb.add(addr1);
-            rrb.add(addr2);
+            let server1 = Server::new(FromStr::from_str("127.0.0.1:6000").unwrap());
+            let server2 = Server::new(FromStr::from_str("127.0.0.1:6001").unwrap());
+            rrb.add(server1.clone());
+            rrb.add(server2.clone());
             assert_eq!(2, rrb.backends.len());
-            assert_eq!(vec![addr1, addr2], rrb.all());
+            assert_eq!(vec![server1.clone(), server2.clone()], rrb.all());
 
-            let unknown_addr = FromStr::from_str("127.0.0.1:1234").unwrap();
-            rrb.remove(&unknown_addr);
+            let unknown_server = Server::new(FromStr::from_str("127.0.0.1:1234").unwrap());
+            rrb.remove(&unknown_server);
             assert_eq!(2, rrb.backends.len());
-            assert_eq!(vec![addr1, addr2], rrb.all());
+            assert_eq!(vec![server1.clone(), server2.clone()], rrb.all());
 
-            rrb.remove(&addr1);
+            rrb.remove(&server1);
             assert_eq!(1, rrb.backends.len());
-            assert_eq!(vec![addr2], rrb.all());
+            assert_eq!(vec![server2.clone()], rrb.all());
 
-            rrb.remove(&addr2);
+            rrb.remove(&server2);
             assert_eq!(0, rrb.backends.len());
             assert!(rrb.all().is_empty());
         }

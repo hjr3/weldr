@@ -6,10 +6,9 @@ extern crate env_logger;
 extern crate rustc_serialize;
 extern crate tokio_core;
 extern crate tokio_service;
+extern crate tokio_timer;
 
-// pub mod for now until the entire API is used internally
 pub mod pool;
 pub mod proxy;
-//pub mod backend;
-//pub mod frontend;
 pub mod mgmt;
+pub mod health;

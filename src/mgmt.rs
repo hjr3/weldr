@@ -6,7 +6,7 @@ use rustful::header::ContentType;
 use rustc_serialize::Encodable;
 use rustc_serialize::json::{Encoder, EncodeResult};
 
-use pool::Pool;
+use pool::{self, Pool};
 
 // HATEOAS links: https://en.wikipedia.org/wiki/HATEOAS
 #[derive(Debug, RustcDecodable, RustcEncodable)]
@@ -58,16 +58,16 @@ fn encode_pretty<T: Encodable>(object: &T) -> EncodeResult<String> {
 }
 
 fn all_servers_reponse(pool: &Pool, mut response: Response) {
-    let all_addr = pool.all();
-    let servers: Vec<PoolServer> = all_addr.into_iter().map(|addr| {
-        let ip = match addr.ip() {
+    let all_servers = pool.all();
+    let servers: Vec<PoolServer> = all_servers.into_iter().map(|server| {
+        let ip = match server.addr().ip() {
             IpAddr::V4(v4) => format!("{}", v4),
             _ => unimplemented!(),
         };
-        let delete_href = format!("/servers/{}/{}", &ip, addr.port());
+        let delete_href = format!("/servers/{}/{}", &ip, server.addr().port());
         PoolServer {
             ip: ip,
-            port: format!("{}", addr.port()),
+            port: format!("{}", server.addr().port()),
             links: Some(vec![Link {
                 rel: "delete".to_string(),
                 href: delete_href,
@@ -120,8 +120,9 @@ fn remove_server(context: Context, response: Response) {
     let host = context.variables.get("host").expect("Failed to get host");
     let port = context.variables.get("port").expect("Failed to get port");
     let addr = FromStr::from_str(format!("{}:{}", host, port).as_str()).expect("Failed to parse host and port");
-    pool.remove(&addr);
-    info!("Removed server {} from pool", &addr);
+    let server = pool::Server::new(addr);
+    pool.remove(&server);
+    info!("Removed server {:?} from pool", server);
     all_servers_reponse(pool, response)
 }
 

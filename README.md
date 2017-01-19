@@ -41,21 +41,24 @@ POST /servers
 {
    "ip": "120.0.0.1",
    "port": "8080",
-   "check": {
-      "type": "tcp"
-   }
 }
 ```
+
+Example: `curl -vvv localhost:8687/servers -d '{"ip":"127.0.0.1", "port":"12345"}'`
 
 ### Removing A Server
 
 Note: It is more common for a server to fall out of the pool after `n` health checks fail.
 
 ```
-DELETE /servers/:id
+DELETE /servers/:ip/:port
 ```
 
+Example: `curl -vvv -X DELETE localhost:8687/servers/127.0.0.1/12345`
+
 ### Stats
+
+_Work in progress._
 
 ```
 GET /stats
@@ -75,6 +78,8 @@ GET /stats
 ```
 
 #### Detailed Stats
+
+_Work in progress._
 
 ```
 GET /stats/detail

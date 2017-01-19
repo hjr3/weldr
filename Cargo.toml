@@ -11,6 +11,7 @@ futures = "0.1.1"
 hyper = { git = "https://github.com/hyperium/hyper" }
 tokio-core = "0.1"
 tokio-service = { git = "https://github.com/tokio-rs/tokio-service" }
+tokio-timer = "0.1.0"
 
 rustc-serialize = "0.3.19"
 
