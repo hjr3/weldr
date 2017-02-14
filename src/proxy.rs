@@ -157,8 +157,8 @@ impl Service for Proxy {
     type Future = Box<Future<Item=server::Response, Error=Self::Error>>;
 
     fn call(&self, req: server::Request) -> Self::Future {
-        let addr = self.pool.get().expect("Failed to get address from pool");
-        let url = format!("http://{}{}", addr, req.path());
+        let server = self.pool.get().expect("Failed to get server from pool");
+        let url = format!("http://{}{}", server.addr(), req.path());
         debug!("Preparing backend request to {:?}", url);
 
         let client_req = map_request(req, &url);

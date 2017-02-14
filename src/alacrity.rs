@@ -4,9 +4,11 @@ extern crate alacrity;
 use std::env;
 use std::net::SocketAddr;
 use std::thread;
+use std::time::Duration;
 
-use alacrity::pool::Pool;
+use alacrity::pool::{Pool, Server};
 use alacrity::mgmt;
+use alacrity::health;
 
 fn main() {
     env_logger::init().expect("Failed to start logger");
@@ -16,6 +18,7 @@ fn main() {
 
     let backend = env::args().nth(2).unwrap_or("127.0.0.1:12345".to_string());
     let backend = backend.parse::<SocketAddr>().unwrap();
+    let backend = Server::new(backend);
     let pool = Pool::with_servers(vec![backend]);
 
     let admin_ip = env::args().nth(3).unwrap_or("127.0.0.1:8687".to_string());
@@ -23,6 +26,12 @@ fn main() {
     let p = pool.clone();
     let _ = thread::Builder::new().name("management".to_string()).spawn(move || {
         mgmt::listen(admin_addr, p);
+    }).expect("Failed to create proxy thread");
+
+    let p = pool.clone();
+    let _ = thread::Builder::new().name("health-check".to_string()).spawn(move || {
+        let checker = health::HealthCheck::new(Duration::from_millis(1000), p, "/".to_owned());
+        checker.run();
     }).expect("Failed to create proxy thread");
 
     let handle = alacrity::proxy::listen(addr, pool.clone()).expect("Failed to start server");
