@@ -23,7 +23,8 @@ An eventual goal is to have the pool managed by Raft. This will allow a cluster 
 
 ## High Level Roadmap
 
-We are currently working on a [0.1.0](https://github.com/hjr3/alacrity/issues?utf8=%E2%9C%93&q=is%3Aissue%20milestone%3Av0.1.0%20) release.
+   * Initial [0.1.0] release.
+   * Currently working on a [0.2.0](https://github.com/hjr3/alacrity/milestone/2) release.
 
 ## Proposed Management API Design
 
