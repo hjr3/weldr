@@ -1,16 +1,16 @@
 # Contributing
 
-If you are looking to help to with a code contribution our project uses the Rust programming language with the tokio asynchronous IO framework. If you don't feel ready to make a code contribution yet, no problem! You can also check out the [documentation issues](https://github.com/hjr3/alacrity/labels/documentation).
+If you are looking to help to with a code contribution our project uses the Rust programming language with the tokio asynchronous IO framework. If you don't feel ready to make a code contribution yet, no problem! You can also check out the [documentation issues](https://github.com/hjr3/weldr/labels/documentation).
 
 If you need help, you can ask questions IRC chat. I am _hjr3_ on irc.mozilla.org and freenode.
 
 ## Feature Requests
 
-To request a change to the way that the alacrity works, please open an issue before starting work. New features and other significant changes must be discussed first.
+To request a change to the way that the weldr works, please open an issue before starting work. New features and other significant changes must be discussed first.
 
 ## Pull Requests
 
-Pull requests are the primary mechanism we use to change alacrity. GitHub itself has some [great documentation](https://help.github.com/articles/about-pull-requests/) on using the Pull Request feature. We use the _fork and pull_ model described there.
+Pull requests are the primary mechanism we use to change weldr. GitHub itself has some [great documentation](https://help.github.com/articles/about-pull-requests/) on using the Pull Request feature. We use the _fork and pull_ model described there.
 
 A few additional guidelines:
 

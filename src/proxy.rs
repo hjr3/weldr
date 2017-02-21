@@ -49,7 +49,7 @@ pub fn create_via_header(via: Option<& Via>, version: &HttpVersion) -> Via {
         _ => unreachable!(),
     };
 
-    let value = Via(format!("{} alacrity", version));
+    let value = Via(format!("{} weldr", version));
 
     match via {
         Some(v) => {
@@ -240,11 +240,11 @@ mod tests {
 
         let given = create_via_header(None, &version);
 
-        assert_eq!(Via("1.1 alacrity".to_owned()), given);
+        assert_eq!(Via("1.1 weldr".to_owned()), given);
 
         let given = create_via_header(Some(&via), &version);
 
-        assert_eq!(Via("1.0 proxy, 1.1 alacrity".to_owned()), given);
+        assert_eq!(Via("1.0 proxy, 1.1 weldr".to_owned()), given);
     }
 
     #[test]

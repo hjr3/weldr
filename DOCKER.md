@@ -18,27 +18,27 @@ cargo build --target x86_64-unknown-linux-musl --release
 docker run -v $PWD:/volume -w /volume -t clux/muslrust cargo build --release
 ```
 
-The executable can be found under: `./target/x86_64-unknown-linux-musl/release/alacrity`
+The executable can be found under: `./target/x86_64-unknown-linux-musl/release/weldr`
 
 ## Create the docker container
 ```
-docker build -t alacrity .
+docker build -t weldr .
 ```
 
 ## Test the docker container
 ```
 docker run -p 8080:8080 -p 8687:8687 \
--e "RUST_BACKTRACE=1" -e "RUST_LOG=alacrity" \
---name alacrity \
-alacrity \
-/alacrity 0.0.0.0:8080 127.0.0.1:12345 0.0.0.0:8687
+-e "RUST_BACKTRACE=1" -e "RUST_LOG=weldr" \
+--name weldr \
+weldr \
+/weldr 0.0.0.0:8080 127.0.0.1:12345 0.0.0.0:8687
 ```
 Explanations:
 - `-p 8080:8080 -p 8687:8687`: bind the ports 8080 and 8687 to localhost
-- `-e "RUST_BACKTRACE=1" -e "RUST_LOG=alacrity"`: set the environment variables `RUST_BACKTRACE` and `RUST_LOG`
-- `--name alacrity`: name the running container
-- `alacrity`: container image
-- `/alacrity 0.0.0.0:8080 127.0.0.1:12345 0.0.0.0:8687`: start alacrity listening on all IPs.
+- `-e "RUST_BACKTRACE=1" -e "RUST_LOG=weldr"`: set the environment variables `RUST_BACKTRACE` and `RUST_LOG`
+- `--name weldr`: name the running container
+- `weldr`: container image
+- `/weldr 0.0.0.0:8080 127.0.0.1:12345 0.0.0.0:8687`: start weldr listening on all IPs.
 
 The proxy is accessible on [localhost:8080](http://localhost:8080) and the admin interface is accessible on [localhost:8687](http://localhost:8687)
 or with docker-machine:
@@ -52,5 +52,5 @@ curl $url/servers
 
 Stops the test container with:
 ```
-docker rm -vf alacrity
+docker rm -vf weldr
 ```

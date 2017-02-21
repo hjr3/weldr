@@ -3,7 +3,7 @@ extern crate env_logger;
 extern crate futures;
 extern crate tokio_core;
 extern crate hyper;
-extern crate alacrity;
+extern crate weldr;
 extern crate reqwest;
 
 use std::io::{Read, Write};
@@ -16,7 +16,7 @@ use hyper::{Get, Post, StatusCode};
 use hyper::server::{Http, Service, Request, Response};
 use hyper::header::{ContentLength, TransferEncoding};
 
-use alacrity::pool::Pool;
+use weldr::pool::Pool;
 
 #[derive(Clone, Copy)]
 struct Origin;
@@ -72,7 +72,7 @@ fn with_server<R> (req: R) where R: Fn(String)
     let pool = Pool::with_servers(vec![]);
 
     let addr = "127.0.0.1:0".parse::<SocketAddr>().unwrap();
-    let _h1 = alacrity::proxy::listen(addr, pool.clone()).expect("Failed to start server");
+    let _h1 = weldr::proxy::listen(addr, pool.clone()).expect("Failed to start server");
 
     let (tx, rx) = channel();
     let _h2 = thread::spawn(move || {

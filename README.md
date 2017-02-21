@@ -1,6 +1,6 @@
-[![Build Status](https://travis-ci.org/hjr3/alacrity.svg?branch=master)](https://travis-ci.org/hjr3/alacrity)
+[![Build Status](https://travis-ci.org/hjr3/weldr.svg?branch=master)](https://travis-ci.org/hjr3/weldr)
 
-# Alacrity
+# Weldr
 
 A HTTP 1.1 reverse proxy written in Rust using hyper (tokio version).
 
@@ -8,23 +8,23 @@ A HTTP 1.1 reverse proxy written in Rust using hyper (tokio version).
 
 The goal is to build an _AWS ELB_-like reverse proxy that works well in the dynamic VM/container environments that are starting to be more common. Of particular focus is the ability to manage origins from the pool via some API.
 
-An eventual goal is to have the pool managed by Raft. This will allow a cluster of redundant alacrity servers. This will allow an active/passive setup out of the box. Note: The [raft-rs](https://github.com/hoverbear/raft-rs) crate does not currently support dynamic membership.
+An eventual goal is to have the pool managed by Raft. This will allow a cluster of redundant weldr servers. This will allow an active/passive setup out of the box. Note: The [raft-rs](https://github.com/hoverbear/raft-rs) crate does not currently support dynamic membership.
 
 ## Running Protype
 
-   * `RUST_LOG=alacrity cargo run --bin alacrity` - start the proxy
+   * `RUST_LOG=weldr cargo run --bin weldr` - start the proxy
    * `cargo run --bin test-server` - start test origin server
    * `curl -vvv localhost:8080` - send a request
    * `curl -vvv localhost:8080/large` - send a request and get back a large response
 
 ### Running Tests
 
-`RUST_LOG=test_proxy,alacrity cargo test` will execute the tests and provide log level output for both the proxy and the integration tests.
+`RUST_LOG=test_proxy,weldr cargo test` will execute the tests and provide log level output for both the proxy and the integration tests.
 
 ## High Level Roadmap
 
    * Initial [0.1.0] release.
-   * Currently working on a [0.2.0](https://github.com/hjr3/alacrity/milestone/2) release.
+   * Currently working on a [0.2.0](https://github.com/hjr3/weldr/milestone/2) release.
 
 ## Proposed Management API Design
 

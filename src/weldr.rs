@@ -1,14 +1,14 @@
 extern crate env_logger;
-extern crate alacrity;
+extern crate weldr;
 
 use std::env;
 use std::net::SocketAddr;
 use std::thread;
 use std::time::Duration;
 
-use alacrity::pool::{Pool, Server};
-use alacrity::mgmt;
-use alacrity::health;
+use weldr::pool::{Pool, Server};
+use weldr::mgmt;
+use weldr::health;
 
 fn main() {
     env_logger::init().expect("Failed to start logger");
@@ -34,6 +34,6 @@ fn main() {
         checker.run();
     }).expect("Failed to create proxy thread");
 
-    let handle = alacrity::proxy::listen(addr, pool.clone()).expect("Failed to start server");
+    let handle = weldr::proxy::listen(addr, pool.clone()).expect("Failed to start server");
     handle.join().unwrap();
 }
