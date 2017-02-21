@@ -38,7 +38,7 @@ struct Index {
 fn index(_context: Context, mut response: Response) {
     response.headers_mut().set::<ContentType>(ContentType::json());
     let index = Index {
-        about: "Alacrity Management API".to_string(),
+        about: "Weldr Management API".to_string(),
         links: vec![Link {
             rel: "servers".to_string(),
             href: "/servers".to_string(),

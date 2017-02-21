@@ -1,5 +1,5 @@
 [package]
-name = "alacrity"
+name = "weldr"
 version = "0.1.0"
 authors = ["Herman J. Radtke III <herman@hermanradtke.com>"]
 
@@ -24,8 +24,8 @@ features = ["rustc_json_body"]
 reqwest = "0.2.0"
 
 [[bin]]
-name = "alacrity"
-path = "src/alacrity.rs"
+name = "weldr"
+path = "src/weldr.rs"
 
 [[bin]]
 name = "test-server"
