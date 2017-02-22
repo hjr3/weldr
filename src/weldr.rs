@@ -17,8 +17,7 @@ fn main() {
     let addr = addr.parse::<SocketAddr>().unwrap();
 
     let backend = env::args().nth(2).unwrap_or("127.0.0.1:12345".to_string());
-    let backend = backend.parse::<SocketAddr>().unwrap();
-    let backend = Server::new(backend);
+    let backend = backend.parse::<Server>().unwrap();
     let pool = Pool::with_servers(vec![backend]);
 
     let admin_ip = env::args().nth(3).unwrap_or("127.0.0.1:8687".to_string());

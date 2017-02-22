@@ -120,7 +120,8 @@ fn remove_server(context: Context, response: Response) {
     let host = context.variables.get("host").expect("Failed to get host");
     let port = context.variables.get("port").expect("Failed to get port");
     let addr = FromStr::from_str(format!("{}:{}", host, port).as_str()).expect("Failed to parse host and port");
-    let server = pool::Server::new(addr);
+    // TODO: add the possibility to remove a secured server
+    let server = pool::Server::new(addr, false);
     pool.remove(&server);
     info!("Removed server {:?} from pool", server);
     all_servers_reponse(pool, response)
