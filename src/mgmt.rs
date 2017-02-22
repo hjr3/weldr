@@ -126,6 +126,16 @@ fn remove_server(context: Context, response: Response) {
     all_servers_reponse(pool, response)
 }
 
+fn stats(context: Context, response: Response) {
+    let pool: &Pool = context.global.get().expect("Failed to get global pool");
+    for server in pool.all() {
+        debug!("stats = {:?}", server.stats());
+    }
+}
+
+fn stats_detail(context: Context, response: Response) {
+}
+
 pub fn listen(addr: SocketAddr, pool: Pool) {
     info!("Starting administration server listening on http://{}", &addr);
     Server {
@@ -136,6 +146,8 @@ pub fn listen(addr: SocketAddr, pool: Pool) {
                 "/servers" => Post: add_server as fn(Context, Response),
                 "/servers" => Get: get_servers as fn(Context, Response),
                 "/servers/:host/:port" => Delete: remove_server as fn(Context, Response),
+                "/stats" => Get: stats as fn(Context, Response),
+                "/stats/detail" => Get: stats_detail as fn(Context, Response),
             }
         },
         global: Box::new(pool).into(),

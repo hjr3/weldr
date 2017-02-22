@@ -192,6 +192,10 @@ impl Server {
         &mut self.stats
     }
 
+    pub fn stats(&self) -> &Stats {
+        &self.stats
+    }
+
     pub fn addr(&self) -> &SocketAddr {
         &self.addr
     }
