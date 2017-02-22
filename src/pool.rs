@@ -218,22 +218,29 @@ impl Service for HttpPool {
     type Future = Box<Future<Item=server::Response, Error=Self::Error>>;
 
     fn call(&self, req: server::Request) -> Self::Future {
-        let server = self.pool.get().expect("Failed to get server from pool");
+        let mut server = self.pool.get().expect("Failed to get server from pool");
         let url = format!("http://{}{}", server.addr(), req.path());
         debug!("Preparing backend request to {:?}", url);
 
         let client_req = map_request(req, &url);
 
-        let backend = self.client.call(client_req).and_then(|res| {
-            debug!("Response: {}", res.status());
-            debug!("Headers: \n{}", res.headers());
+        let backend = self.client.call(client_req).then(move |res| {
+            match res {
+                Ok(res) => {
+                    debug!("Response: {}", res.status());
+                    debug!("Headers: \n{}", res.headers());
 
-            let server_response = map_response(res);
+                    let server_response = map_response(res);
+                    server.stats_mut().inc_success();
 
-            ::futures::finished(server_response)
-        }).map_err(|e| {
-            error!("Error connecting to backend: {:?}", e);
-            e
+                    ::futures::finished(server_response)
+                }
+                Err(e) => {
+                    error!("Error connecting to backend: {:?}", e);
+                    server.stats_mut().inc_failure();
+                    ::futures::failed(e)
+                }
+            }
         });
 
         Box::new(backend)
