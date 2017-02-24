@@ -222,32 +222,35 @@ impl Service for HttpPool {
     type Future = Box<Future<Item=server::Response, Error=Self::Error>>;
 
     fn call(&self, req: server::Request) -> Self::Future {
-        let mut server = self.pool.get().expect("Failed to get server from pool");
-        let url = format!("http://{}{}", server.addr(), req.path());
-        debug!("Preparing backend request to {:?}", url);
+        let f = |server: &Server| -> Self::Future {
+            let url = format!("http://{}{}", server.addr(), req.path());
+            debug!("Preparing backend request to {:?}", url);
 
-        let client_req = map_request(req, &url);
+            let client_req = map_request(req, &url);
 
-        let backend = self.client.call(client_req).then(move |res| {
-            match res {
-                Ok(res) => {
-                    debug!("Response: {}", res.status());
-                    debug!("Headers: \n{}", res.headers());
+            let backend = self.client.call(client_req).then(move |res| {
+                match res {
+                    Ok(res) => {
+                        debug!("Response: {}", res.status());
+                        debug!("Headers: \n{}", res.headers());
 
-                    let server_response = map_response(res);
-                    server.stats_mut().inc_success();
+                        let server_response = map_response(res);
+                        //server.stats_mut().inc_success();
 
-                    ::futures::finished(server_response)
+                        ::futures::finished(server_response)
+                    }
+                    Err(e) => {
+                        error!("Error connecting to backend: {:?}", e);
+                        //server.stats_mut().inc_failure();
+                        ::futures::failed(e)
+                    }
                 }
-                Err(e) => {
-                    error!("Error connecting to backend: {:?}", e);
-                    server.stats_mut().inc_failure();
-                    ::futures::failed(e)
-                }
-            }
-        });
+            });
 
-        Box::new(backend)
+            Box::new(backend)
+        };
+
+        self.pool.loan(f)
     }
 }
 
@@ -272,6 +275,12 @@ impl Pool {
 
     pub fn new() -> Pool {
         Pool::with_servers(vec![])
+    }
+
+    pub fn loan<F>(&self, f: F) -> Box<Future<Item=server::Response, Error=hyper::Error>>
+        where F: FnOnce(&Server) -> Box<Future<Item=server::Response, Error=hyper::Error>>
+    {
+        self.inner.write().expect("Lock is poisoned").loan(f)
     }
 
     /// Get a `Server` from the pool
@@ -305,6 +314,10 @@ impl Pool {
 }
 
 pub mod inner {
+    use std::io::{Error, ErrorKind};
+    use futures::Future;
+    use hyper;
+    use hyper::server;
     use super::Server;
 
     pub struct Pool {
@@ -318,6 +331,27 @@ pub mod inner {
                 backends: backends,
                 last_used: 0,
             }
+        }
+
+        pub fn loan<F>(&mut self, f: F) -> Box<Future<Item=server::Response, Error=hyper::Error>>
+            where F: FnOnce(&Server) -> Box<Future<Item=server::Response, Error=hyper::Error>>
+        {
+            if self.backends.is_empty() {
+                let e = Error::new(ErrorKind::Other, "Pool is exhausted of socket addresses");
+                return Box::new(::futures::failed(hyper::Error::Io(e)));
+            }
+
+            self.last_used = (self.last_used + 1) % self.backends.len();
+
+            if self.backends.get(self.last_used).is_none() {
+                let e = Error::new(ErrorKind::Other, format!("No server found at index {}", self.last_used));
+                return Box::new(::futures::failed(hyper::Error::Io(e)));
+			}
+
+		    // TODO make this safe. for some reason the type checker does like when i used
+            // map_or_else
+            let server = unsafe { self.backends.get_unchecked_mut(self.last_used) };
+			f(&server)
         }
 
         pub fn get(&mut self) -> Option<Server> {
