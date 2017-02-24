@@ -3,6 +3,7 @@ use std::net::SocketAddr;
 use std::result;
 use std::str;
 use std::thread;
+use std::sync::mpsc::channel;
 
 use futures::{Future, Stream};
 use tokio_core::reactor::Core;
@@ -180,14 +181,17 @@ impl Service for Proxy {
     }
 }
 
-pub fn listen(addr: SocketAddr, pool: Pool) -> result::Result<thread::JoinHandle<()>, io::Error> {
+pub fn listen(addr: SocketAddr, pool: Pool) -> result::Result<(thread::JoinHandle<()>, SocketAddr), io::Error> {
+    let (tx, rx) = channel();
     let handle = thread::spawn(move || {
 
         let mut core = Core::new().unwrap();
         let handle = core.handle();
 
         let listener = TcpListener::bind(&addr, &handle).unwrap();
-        info!("Listening on http://{}", &addr);
+        let local_addr = listener.local_addr().unwrap();
+        info!("Listening on http://{}", &local_addr);
+        tx.send(local_addr).unwrap();
 
         let work = listener.incoming().for_each(move |(socket, addr)| {
             let client = Client::configure()
@@ -206,8 +210,8 @@ pub fn listen(addr: SocketAddr, pool: Pool) -> result::Result<thread::JoinHandle
         core.run(work).unwrap();
     });
 
-
-    Ok(handle)
+    let local_addr = rx.recv().unwrap();
+    Ok((handle, local_addr))
 }
 
 #[cfg(test)]
