@@ -3,7 +3,8 @@ use std::time::Duration;
 use futures::*;
 use tokio_timer::*;
 use tokio_core::reactor::Core;
-use hyper::{Client, Url};
+use hyper::Client;
+use hyper_tls::HttpsConnector;
 
 use pool::Pool;
 
@@ -28,14 +29,15 @@ impl HealthCheck {
         let timer = Timer::default();
 
         let handle = core.handle();
-        let client = Client::new(&handle);
+        let client = Client::configure()
+            .connector(HttpsConnector::new(4, &handle))
+            .build(&handle);
 
         let pool = self.pool.clone();
         let work = timer.interval(self.interval).for_each(move |()| {
             let servers = pool.all();
             for server in servers {
-                let url = format!("{}://{}{}", server.protocol(), server.addr(), self.uri_path);
-                let url = Url::parse(&url).unwrap();
+                let url = server.url().join(&self.uri_path).unwrap();
                 debug!("Health check {:?}", url);
 
                 let pool1 = pool.clone();

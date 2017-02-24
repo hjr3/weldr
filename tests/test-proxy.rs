@@ -16,7 +16,7 @@ use hyper::{Get, Post, StatusCode};
 use hyper::server::{Http, Service, Request, Response};
 use hyper::header::{ContentLength, TransferEncoding};
 
-use weldr::pool::Pool;
+use weldr::pool::{Pool, Server};
 
 #[derive(Clone, Copy)]
 struct Origin;
@@ -85,9 +85,10 @@ fn with_server<R> (req: R) where R: Fn(String)
     });
 
     let origin = rx.recv().unwrap();
-    pool.add(origin);
+    let origin_str = format!("http://127.0.0.1:{}", origin.port());
+    pool.add(origin_str.parse::<Server>().unwrap());
 
-    req(format!("http://127.0.0.1:{}", origin.port()));
+    req(origin_str);
     req(format!("http://{}:{}", proxy_addr.ip(), proxy_addr.port()));
 }
 

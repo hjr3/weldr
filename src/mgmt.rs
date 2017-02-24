@@ -1,4 +1,4 @@
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 use std::str::FromStr;
 
 use rustful::{Server, Context, Response, StatusCode, TreeRouter};
@@ -6,7 +6,7 @@ use rustful::header::ContentType;
 use rustc_serialize::Encodable;
 use rustc_serialize::json::{Encoder, EncodeResult};
 
-use pool::{self, Pool};
+use pool::Pool;
 
 // HATEOAS links: https://en.wikipedia.org/wiki/HATEOAS
 #[derive(Debug, RustcDecodable, RustcEncodable)]
@@ -24,8 +24,7 @@ struct PoolServers {
 
 #[derive(Debug, RustcDecodable, RustcEncodable)]
 struct PoolServer {
-    pub ip: String,
-    pub port: String,
+    pub url: String,
     pub links: Option<Vec<Link>>,
 }
 
@@ -60,14 +59,11 @@ fn encode_pretty<T: Encodable>(object: &T) -> EncodeResult<String> {
 fn all_servers_reponse(pool: &Pool, mut response: Response) {
     let all_servers = pool.all();
     let servers: Vec<PoolServer> = all_servers.into_iter().map(|server| {
-        let ip = match server.addr().ip() {
-            IpAddr::V4(v4) => format!("{}", v4),
-            _ => unimplemented!(),
-        };
-        let delete_href = format!("/servers/{}/{}", &ip, server.addr().port());
+        let url = server.url().as_str().to_string();
+        // TODO: find a better way to identify a server
+        let delete_href = format!("/servers/{}", url);
         PoolServer {
-            ip: ip,
-            port: format!("{}", server.addr().port()),
+            url: url,
             links: Some(vec![Link {
                 rel: "delete".to_string(),
                 href: delete_href,
@@ -101,9 +97,8 @@ fn add_server(mut context: Context, mut response: Response) {
             debug!("body = {:?}", server);
 
             let pool: &Pool = context.global.get().expect("Failed to get global pool");
-            let ip = format!("{}:{}", server.ip, server.port);
-            pool.add(FromStr::from_str(&ip).expect("Failed to parse socket addr"));
-            debug!("Added new IP to pool");
+            pool.add(FromStr::from_str(&server.url).expect("Failed to parse server url"));
+            debug!("Added new server to pool");
 
             all_servers_reponse(pool, response)
         }
@@ -117,13 +112,14 @@ fn add_server(mut context: Context, mut response: Response) {
 fn remove_server(context: Context, response: Response) {
 
     let pool: &Pool = context.global.get().expect("Failed to get global pool");
-    let host = context.variables.get("host").expect("Failed to get host");
-    let port = context.variables.get("port").expect("Failed to get port");
-    let addr = FromStr::from_str(format!("{}:{}", host, port).as_str()).expect("Failed to parse host and port");
-    // TODO: add the possibility to remove a secured server
-    let server = pool::Server::new(addr, false);
-    pool.remove(&server);
-    info!("Removed server {:?} from pool", server);
+    let url = context.variables.get("url").expect("Failed to get url");
+    match FromStr::from_str(&url) {
+        Ok(server) => {
+            pool.remove(&server);
+            info!("Removed server {:?} from pool", server);
+        }
+        _ => ()
+    };
     all_servers_reponse(pool, response)
 }
 
