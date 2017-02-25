@@ -33,6 +33,6 @@ fn main() {
         checker.run();
     }).expect("Failed to create proxy thread");
 
-    let handle = weldr::proxy::listen(addr, pool.clone()).expect("Failed to start server");
+    let (handle, _) = weldr::proxy::listen(addr, pool.clone()).expect("Failed to start server");
     handle.join().unwrap();
 }

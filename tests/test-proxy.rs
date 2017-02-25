@@ -72,7 +72,7 @@ fn with_server<R> (req: R) where R: Fn(String)
     let pool = Pool::with_servers(vec![]);
 
     let addr = "127.0.0.1:0".parse::<SocketAddr>().unwrap();
-    let _h1 = weldr::proxy::listen(addr, pool.clone()).expect("Failed to start server");
+    let (_h1, proxy_addr) = weldr::proxy::listen(addr, pool.clone()).expect("Failed to start server");
 
     let (tx, rx) = channel();
     let _h2 = thread::spawn(move || {
@@ -88,6 +88,7 @@ fn with_server<R> (req: R) where R: Fn(String)
     pool.add(origin);
 
     req(format!("http://127.0.0.1:{}", origin.port()));
+    req(format!("http://{}:{}", proxy_addr.ip(), proxy_addr.port()));
 }
 
 /// Utility function for creating a raw request to the proxy
