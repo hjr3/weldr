@@ -178,16 +178,23 @@ impl Service for Proxy {
 
         let client_req = map_request(req, url, map_host);
 
-        let backend = self.client.call(client_req).and_then(|res| {
-            debug!("Response: {}", res.status());
-            debug!("Headers: \n{}", res.headers());
+        let backend = self.client.call(client_req).then(move |res| {
+            match res {
+                Ok(res) => {
+                    debug!("Response: {}", res.status());
+                    debug!("Headers: \n{}", res.headers());
 
-            let server_response = map_response(res);
+                    server.inc_success();
+                    let server_response = map_response(res);
 
-            ::futures::finished(server_response)
-        }).map_err(|e| {
-            error!("Error connecting to backend: {:?}", e);
-            e
+                    ::futures::finished(server_response)
+                }
+                Err(e) => {
+                    server.inc_failure();
+                    error!("Error connecting to backend: {:?}", e);
+                    ::futures::failed(e)
+                }
+            }
         });
 
         Box::new(backend)

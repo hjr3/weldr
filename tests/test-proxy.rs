@@ -16,7 +16,8 @@ use hyper::{Get, Post, StatusCode};
 use hyper::server::{Http, Service, Request, Response};
 use hyper::header::{ContentLength, TransferEncoding};
 
-use weldr::pool::{Pool, Server};
+use weldr::server::Server;
+use weldr::pool::Pool;
 
 #[derive(Clone, Copy)]
 struct Origin;

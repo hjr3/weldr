@@ -9,6 +9,7 @@ extern crate tokio_core;
 extern crate tokio_service;
 extern crate tokio_timer;
 
+pub mod server;
 pub mod pool;
 pub mod proxy;
 pub mod mgmt;

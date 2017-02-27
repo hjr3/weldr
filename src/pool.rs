@@ -1,89 +1,6 @@
 use std::sync::{Arc, RwLock};
-use std::str::FromStr;
-use hyper::Url;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Stats {
-    failure: usize,
-    success: usize,
-}
-
-impl Stats {
-    pub fn new() -> Stats {
-        Stats {
-            failure: 0,
-            success: 0,
-        }
-    }
-
-    pub fn inc_success(&mut self) {
-        self.success += 1;
-    }
-
-    pub fn inc_failure(&mut self) {
-        self.failure += 1;
-    }
-
-    pub fn success(&self) -> usize {
-        self.success
-    }
-
-    pub fn failure(&self) -> usize {
-        self.failure
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Server {
-    url: Url,
-    map_host: bool,
-    hc_failure: usize,
-    stats: Stats,
-}
-
-impl Server {
-    pub fn new(url: Url) -> Server {
-        Server {
-            url: url,
-            map_host: false,
-            hc_failure: 0,
-            stats: Stats::new(),
-        }
-    }
-
-    pub fn url(&self) -> Url {
-        self.url.clone()
-    }
-
-    pub fn stats_mut(&mut self) -> &mut Stats {
-        &mut self.stats
-    }
-
-    pub fn map_host(&self) -> bool {
-        self.map_host
-    }
-
-    pub fn with_map_host(self, map_host: bool) -> Self {
-        Server {
-            url: self.url,
-            map_host: map_host,
-            hc_failure: self.hc_failure,
-            stats: self.stats,
-        }
-    }
-}
-
-impl FromStr for Server {
-    type Err = ::hyper::error::ParseError;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let url: Url = if s.starts_with("http") {
-            try!(s.parse())
-        } else {
-            try!(format!("http://{}", s).parse())
-        };
-        Ok(Server::new(url))
-    }
-}
+use server::Server;
 
 /// A round-robin pool for servers
 ///
@@ -186,7 +103,7 @@ pub mod inner {
     #[cfg(test)]
     mod tests {
         use super::Pool;
-        use super::Server;
+        use server::Server;
         use std::str::FromStr;
         use hyper::Url;
 
