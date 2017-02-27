@@ -14,6 +14,7 @@ use hyper::client::Service;
 use hyper::header;
 use hyper::server::{self, Http};
 use hyper_tls::HttpsConnector;
+use hyper::Url;
 
 use pool::Pool;
 
@@ -107,17 +108,26 @@ pub fn filter_frontend_request_headers(headers: &Headers) -> Headers {
 ///
 /// The primary purpose of this function is to add and remove headers as required by an
 /// intermediary conforming to the HTTP spec.
-fn map_request(req: server::Request, url: &str) -> client::Request {
-    let mut r = client::Request::new(req.method().clone(), url.parse().unwrap());
-
+fn map_request(req: server::Request, url: Url, map_host: bool) -> client::Request {
     let via = create_via_header(
         req.headers().get::<Via>(),
         req.version());
 
     let mut headers = filter_frontend_request_headers(req.headers());
     headers.set(via);
-    r.headers_mut().extend(headers.iter());
 
+    if map_host {
+        // add host header related to backend
+        let _ = headers.remove::<header::Host>();
+        let host = url.host_str().unwrap().to_string();
+        let port = url.port_or_known_default();
+        headers.set(
+            header::Host::new(host, port)
+        );
+    }
+
+    let mut r = client::Request::new(req.method().clone(), url);
+    r.headers_mut().extend(headers.iter());
     r.set_body(req.body());
     r
 }
@@ -160,10 +170,13 @@ impl Service for Proxy {
 
     fn call(&self, req: server::Request) -> Self::Future {
         let server = self.pool.get().expect("Failed to get server from pool");
-        let url = format!("{}://{}{}", server.protocol(), server.addr(), req.path());
+        let url = server.url().join(req.path()).unwrap();
+
         debug!("Preparing backend request to {:?}", url);
 
-        let client_req = map_request(req, &url);
+        let map_host = server.map_host();
+
+        let client_req = map_request(req, url, map_host);
 
         let backend = self.client.call(client_req).and_then(|res| {
             debug!("Response: {}", res.status());

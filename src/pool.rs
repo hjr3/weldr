@@ -1,6 +1,6 @@
 use std::sync::{Arc, RwLock};
 use std::str::FromStr;
-use std::net::{AddrParseError, IpAddr, SocketAddr};
+use hyper::Url;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Stats {
@@ -35,59 +35,53 @@ impl Stats {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Server {
-    addr: SocketAddr,
-    secured: bool,
+    url: Url,
+    map_host: bool,
     hc_failure: usize,
     stats: Stats,
 }
 
 impl Server {
-    pub fn new(addr: SocketAddr, secured: bool) -> Server {
+    pub fn new(url: Url) -> Server {
         Server {
-            addr: addr,
-            secured: secured,
+            url: url,
+            map_host: false,
             hc_failure: 0,
             stats: Stats::new(),
         }
     }
 
-    pub fn ip(&self) -> IpAddr {
-        self.addr.ip()
-    }
-
-    pub fn port(&self) -> u16 {
-        self.addr.port()
+    pub fn url(&self) -> Url {
+        self.url.clone()
     }
 
     pub fn stats_mut(&mut self) -> &mut Stats {
         &mut self.stats
     }
 
-    pub fn addr(&self) -> &SocketAddr {
-        &self.addr
+    pub fn map_host(&self) -> bool {
+        self.map_host
     }
 
-    pub fn secured(&self) -> bool {
-        self.secured
-    }
-
-    pub fn protocol(&self) -> &str {
-        if self.secured { "https" } else { "http" }
+    pub fn with_map_host(self, map_host: bool) -> Self {
+        Server {
+            url: self.url,
+            map_host: map_host,
+            hc_failure: self.hc_failure,
+            stats: self.stats,
+        }
     }
 }
 
 impl FromStr for Server {
-    type Err = AddrParseError;
+    type Err = ::hyper::error::ParseError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let (secured, to_parse) = if s.starts_with("https://") {
-            (true, &s[8..])
-        } else if s.starts_with("http://") {
-            (false, &s[7..])
+        let url: Url = if s.starts_with("http") {
+            try!(s.parse())
         } else {
-            (false, s)
+            try!(format!("http://{}", s).parse())
         };
-
-        FromStr::from_str(to_parse).map(|addr| Server::new(addr, secured))
+        Ok(Server::new(url))
     }
 }
 
@@ -130,8 +124,7 @@ impl Pool {
     /// Add a new server to the pool
     ///
     /// Currently, it is possible to add the same server more then once
-    pub fn add(&self, backend: SocketAddr) {
-        let server = Server::new(backend, false);
+    pub fn add(&self, server: Server) {
         self.inner.write().expect("Lock is poisoned").add(server)
     }
 
@@ -195,24 +188,18 @@ pub mod inner {
         use super::Pool;
         use super::Server;
         use std::str::FromStr;
-        use std::net::{IpAddr, Ipv4Addr};
+        use hyper::Url;
 
         #[test]
         fn test_from_str() {
             let backend1: Server = FromStr::from_str("http://127.0.0.1:6000").unwrap();
-            assert_eq!(backend1.ip(), IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
-            assert_eq!(backend1.port(), 6000);
-            assert_eq!(backend1.secured, false);
+            assert_eq!(backend1.url(), Url::parse("http://127.0.0.1:6000").unwrap());
 
             let backend2: Server = FromStr::from_str("https://10.10.10.10:1010").unwrap();
-            assert_eq!(backend2.ip(), IpAddr::V4(Ipv4Addr::new(10, 10, 10, 10)));
-            assert_eq!(backend2.port(), 1010);
-            assert_eq!(backend2.secured, true);
+            assert_eq!(backend2.url(), Url::parse("https://10.10.10.10:1010").unwrap());
 
             let backend3: Server = FromStr::from_str("8.8.8.8:6543").unwrap();
-            assert_eq!(backend3.ip(), IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)));
-            assert_eq!(backend3.port(), 6543);
-            assert_eq!(backend3.secured, false);
+            assert_eq!(backend3.url(), Url::parse("http://8.8.8.8:6543").unwrap());
         }
 
         #[test]
