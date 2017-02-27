@@ -36,6 +36,7 @@ impl Stats {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Server {
     url: Url,
+    map_host: bool,
     hc_failure: usize,
     stats: Stats,
 }
@@ -44,6 +45,7 @@ impl Server {
     pub fn new(url: Url) -> Server {
         Server {
             url: url,
+            map_host: false,
             hc_failure: 0,
             stats: Stats::new(),
         }
@@ -55,6 +57,19 @@ impl Server {
 
     pub fn stats_mut(&mut self) -> &mut Stats {
         &mut self.stats
+    }
+
+    pub fn map_host(&self) -> bool {
+        self.map_host
+    }
+
+    pub fn with_map_host(self, map_host: bool) -> Self {
+        Server {
+            url: self.url,
+            map_host: map_host,
+            hc_failure: self.hc_failure,
+            stats: self.stats,
+        }
     }
 }
 

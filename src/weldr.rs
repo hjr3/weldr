@@ -18,6 +18,9 @@ fn main() {
 
     let backend = env::args().nth(2).unwrap_or("127.0.0.1:12345".to_string());
     let backend = backend.parse::<Server>().unwrap();
+    let map_host = env::args().nth(4).unwrap_or("false".to_string());
+    let map_host: bool = map_host.parse().unwrap();
+    let backend = backend.with_map_host(map_host);
     let pool = Pool::with_servers(vec![backend]);
 
     let admin_ip = env::args().nth(3).unwrap_or("127.0.0.1:8687".to_string());

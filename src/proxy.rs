@@ -100,7 +100,6 @@ pub fn filter_frontend_request_headers(headers: &Headers) -> Headers {
     let _ = h.remove::<ProxyAuthorization>();
     let _ = h.remove::<Trailer>();
     let _ = h.remove::<header::Upgrade>();
-    let _ = h.remove::<header::Host>();
 
     h
 }
@@ -109,7 +108,7 @@ pub fn filter_frontend_request_headers(headers: &Headers) -> Headers {
 ///
 /// The primary purpose of this function is to add and remove headers as required by an
 /// intermediary conforming to the HTTP spec.
-fn map_request(req: server::Request, url: Url) -> client::Request {
+fn map_request(req: server::Request, url: Url, map_host: bool) -> client::Request {
     let via = create_via_header(
         req.headers().get::<Via>(),
         req.version());
@@ -117,12 +116,15 @@ fn map_request(req: server::Request, url: Url) -> client::Request {
     let mut headers = filter_frontend_request_headers(req.headers());
     headers.set(via);
 
-    // add host header related to backend
-    let host = url.host_str().unwrap().to_string();
-    let port = url.port_or_known_default();
-    headers.set(
-        header::Host::new(host, port)
-    );
+    if map_host {
+        // add host header related to backend
+        let _ = headers.remove::<header::Host>();
+        let host = url.host_str().unwrap().to_string();
+        let port = url.port_or_known_default();
+        headers.set(
+            header::Host::new(host, port)
+        );
+    }
 
     let mut r = client::Request::new(req.method().clone(), url);
     r.headers_mut().extend(headers.iter());
@@ -172,7 +174,9 @@ impl Service for Proxy {
 
         debug!("Preparing backend request to {:?}", url);
 
-        let client_req = map_request(req, url);
+        let map_host = server.map_host();
+
+        let client_req = map_request(req, url, map_host);
 
         let backend = self.client.call(client_req).and_then(|res| {
             debug!("Response: {}", res.status());
@@ -294,8 +298,7 @@ mod tests {
 
         assert_eq!(false, given.has::<TE>());
         assert_eq!(false, given.has::<header::TransferEncoding>());
-        // the Host from the frontend is removed to be replaced by the host for the backend
-        assert_eq!(false, given.has::<header::Host>());
+        assert_eq!(true, given.has::<header::Host>());
         assert_eq!(false, given.has::<header::Connection>());
         assert_eq!(false, given.has::<Foo>());
         assert_eq!(false, given.has::<KeepAlive>());
