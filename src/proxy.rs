@@ -1,22 +1,24 @@
 use std::io;
 use std::net::SocketAddr;
-use std::result;
 use std::str;
-use std::thread;
-use std::sync::mpsc::channel;
+use std::time::Duration;
 
-use futures::{Future, Stream};
-use tokio_core::reactor::Core;
-use tokio_core::net::TcpListener;
+use futures::{future, Future, Stream};
+use tokio_core::reactor::{Core, Handle};
+use tokio_core::net::{TcpListener, TcpStream};
+use tokio_timer::Timer;
 use hyper::{self, Headers, Client, HttpVersion};
 use hyper::client;
 use hyper::client::Service;
 use hyper::header;
 use hyper::server::{self, Http};
 use hyper_tls::HttpsConnector;
-use hyper::Url;
+use hyper::{Url, Uri};
 
 use pool::Pool;
+use mgmt::Mgmt;
+use stream::{merge3, Merged3Item};
+use health;
 
 // testing here before sending PR upstream
 // TODO make this typed
@@ -104,11 +106,24 @@ pub fn filter_frontend_request_headers(headers: &Headers) -> Headers {
     h
 }
 
+fn map_uri_to_url(uri: &Uri) -> Url {
+    debug!("uri = {:?}", uri);
+    Url::parse(
+        &format!(
+            "{}://{}{}?{}",
+            uri.scheme().unwrap_or("http"),
+            uri.authority().unwrap_or("example.com"),
+            uri.path(),
+            uri.query().unwrap_or(""),
+        )
+    ).expect("Failed to map uri to url")
+}
+
 /// Map a frontend request to a backend request
 ///
 /// The primary purpose of this function is to add and remove headers as required by an
 /// intermediary conforming to the HTTP spec.
-fn map_request(req: server::Request, url: Url, map_host: bool) -> client::Request {
+fn map_request(req: server::Request) -> client::Request {
     let via = create_via_header(
         req.headers().get::<Via>(),
         req.version());
@@ -116,15 +131,17 @@ fn map_request(req: server::Request, url: Url, map_host: bool) -> client::Reques
     let mut headers = filter_frontend_request_headers(req.headers());
     headers.set(via);
 
-    if map_host {
-        // add host header related to backend
-        let _ = headers.remove::<header::Host>();
-        let host = url.host_str().unwrap().to_string();
-        let port = url.port_or_known_default();
-        headers.set(
-            header::Host::new(host, port)
-        );
-    }
+    //if map_host {
+    //    // add host header related to backend
+    //    let _ = headers.remove::<header::Host>();
+    //    let host = url.host_str().unwrap().to_string();
+    //    let port = url.port_or_known_default();
+    //    headers.set(
+    //        header::Host::new(host, port)
+    //    );
+    //}
+
+    let url = map_uri_to_url(req.uri());
 
     let mut r = client::Request::new(req.method().clone(), url);
     r.headers_mut().extend(headers.iter());
@@ -169,62 +186,141 @@ impl Service for Proxy {
     type Future = Box<Future<Item=server::Response, Error=Self::Error>>;
 
     fn call(&self, req: server::Request) -> Self::Future {
-        let server = self.pool.get().expect("Failed to get server from pool");
-        let url = server.url().join(req.path()).unwrap();
 
-        debug!("Preparing backend request to {:?}", url);
+        let mut client_req = map_request(req);
 
-        let map_host = server.map_host();
+        //let server = self.pool.get().expect("Failed to get server from pool");
+        self.pool.request(|server| {
 
-        let client_req = map_request(req, url, map_host);
+            // TODO need to add query strings in here as well
+            let url = server.url().join(client_req.url().path()).unwrap();
+            let map_host = server.map_host();
+            debug!("Preparing backend request to {:?}", url);
 
-        let backend = self.client.call(client_req).and_then(|res| {
-            debug!("Response: {}", res.status());
-            debug!("Headers: \n{}", res.headers());
+            if map_host {
+                // add host header related to backend
+                let _ = client_req.headers_mut().remove::<header::Host>();
+                let host = url.host_str().unwrap().to_string();
+                let port = url.port_or_known_default();
+                client_req.headers_mut().set(header::Host::new(host, port));
+            }
+            client_req.set_url(url);
 
-            let server_response = map_response(res);
+            let backend = self.client.call(client_req).then(move |res| {
+                match res {
+                    Ok(res) => {
+                        debug!("Response: {}", res.status());
+                        debug!("Headers: \n{}", res.headers());
 
-            ::futures::finished(server_response)
-        }).map_err(|e| {
-            error!("Error connecting to backend: {:?}", e);
-            e
-        });
+                        let server_response = map_response(res);
 
-        Box::new(backend)
+                        ::futures::finished(server_response)
+                    }
+                    Err(e) => {
+                        error!("Error connecting to backend: {:?}", e);
+                        ::futures::failed(e)
+                    }
+                }
+            });
+
+            Box::new(backend)
+        })
     }
 }
 
-pub fn listen(addr: SocketAddr, pool: Pool) -> result::Result<(thread::JoinHandle<()>, SocketAddr), io::Error> {
-    let (tx, rx) = channel();
-    let handle = thread::spawn(move || {
+/// Run server with default Core
+pub fn run(proxy_addr: SocketAddr, admin_addr: SocketAddr, pool: Pool) -> io::Result<()> {
+    let core = Core::new()?;
+    let handle = core.handle();
 
-        let mut core = Core::new().unwrap();
-        let handle = core.handle();
+    let listener = TcpListener::bind(&proxy_addr, &handle)?;
+    let admin_listener = TcpListener::bind(&admin_addr, &handle)?;
+    run_with(core, listener, admin_listener, pool, future::empty())
+}
 
-        let listener = TcpListener::bind(&addr, &handle).unwrap();
-        let local_addr = listener.local_addr().unwrap();
-        info!("Listening on http://{}", &local_addr);
-        tx.send(local_addr).unwrap();
+/// Run server with specified Core, TcpListener, Pool
+///
+/// This is useful for integration testing where the port is set to 0 and the test code needs to
+/// determine the local addr.
+pub fn run_with<F>(mut core: Core, listener: TcpListener, admin_listener: TcpListener, pool: Pool, shutdown_signal: F) -> io::Result<()>
+    where F: Future<Item = (), Error = hyper::Error>,
+{
+    let handle = core.handle();
 
-        let work = listener.incoming().for_each(move |(socket, addr)| {
-            let client = Client::configure()
-                .connector(HttpsConnector::new(4, &handle))
-                .build(&handle);
-            let service = Proxy {
-                client: client,
-                pool: pool.clone(),
-            };
+    let timer = Timer::default();
 
-            let http = Http::new();
-            http.bind_connection(&handle, socket, addr, service);
-            Ok(())
-        });
-
-        core.run(work).unwrap();
+    // FIXME configure health check timer
+    let health_timer = timer.interval(Duration::from_secs(5)).map_err(|e| {
+        io::Error::new(io::ErrorKind::Other, e)
     });
 
-    let local_addr = rx.recv().unwrap();
-    Ok((handle, local_addr))
+    let local_addr = listener.local_addr()?;
+    let listener = merge3(listener.incoming(), admin_listener.incoming(), health_timer);
+    let srv = listener.for_each(move |stream| {
+
+        // first stream is the proxy ip
+        // second stream is the management ip
+        // third stream is health interval
+        match stream {
+            Merged3Item::First((socket, addr)) => {
+                proxy(socket, addr, pool.clone(), &handle);
+            }
+            Merged3Item::Second((socket, addr)) => {
+                mgmt(socket, addr, pool.clone(), &handle);
+            }
+            Merged3Item::Third(()) => {
+                info!("health check");
+                health::run(pool.clone(), &handle);
+            }
+            Merged3Item::FirstSecond((socket, addr), (socket2, addr2)) => {
+                proxy(socket, addr, pool.clone(), &handle);
+                mgmt(socket2, addr2, pool.clone(), &handle);
+            }
+            Merged3Item::SecondThird((socket, addr), ()) => {
+                mgmt(socket, addr, pool.clone(), &handle);
+                info!("health check");
+                health::run(pool.clone(), &handle);
+            }
+            Merged3Item::FirstThird((socket, addr), ()) => {
+                proxy(socket, addr, pool.clone(), &handle);
+                info!("health check");
+                health::run(pool.clone(), &handle);
+            }
+            Merged3Item::All((socket, addr), (socket2, addr2), ()) => {
+                proxy(socket, addr, pool.clone(), &handle);
+                mgmt(socket2, addr2, pool.clone(), &handle);
+                info!("health check");
+                health::run(pool.clone(), &handle);
+            }
+        }
+
+        Ok(())
+    });
+
+    info!("Listening on http://{}", &local_addr);
+    match core.run(shutdown_signal.select(srv.map_err(|e| e.into()))) {
+        Ok(((), _incoming)) => Ok(()),
+        Err((e, _other)) => return Err(io::Error::new(io::ErrorKind::Other, e)),
+    }
+}
+
+fn proxy(socket: TcpStream, addr: SocketAddr, pool: Pool, handle: &Handle) {
+    let client = Client::configure()
+        .connector(HttpsConnector::new(4, handle))
+        .build(&handle);
+    let service = Proxy {
+        client: client,
+        pool: pool,
+    };
+
+    let http = Http::new();
+    http.bind_connection(&handle, socket, addr, service);
+}
+
+fn mgmt(socket: TcpStream, addr: SocketAddr, pool: Pool, handle: &Handle) {
+    let service = Mgmt::new(pool, handle.clone());
+    let http = Http::new();
+    http.bind_connection(&handle, socket, addr, service);
 }
 
 #[cfg(test)]
