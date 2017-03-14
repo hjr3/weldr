@@ -25,7 +25,7 @@ impl HealthCheck {
     }
 
     pub fn run(&self) {
-        let mut core = Core::new().unwrap();
+        let mut core = trey!Core::new());
         let timer = Timer::default();
 
         let handle = core.handle();
@@ -37,7 +37,7 @@ impl HealthCheck {
         let work = timer.interval(self.interval).for_each(move |()| {
             let servers = pool.all();
             for server in servers {
-                let url = server.url().join(&self.uri_path).unwrap();
+                let url = try!(server.url().join(&self.uri_path));
                 debug!("Health check {:?}", url);
 
                 let pool1 = pool.clone();
@@ -66,6 +66,6 @@ impl HealthCheck {
             Ok(())
         }).map_err(|_| {});
 
-        core.run(work).unwrap();
+        try!(core.run(work));
     }
 }
