@@ -5,6 +5,7 @@ use tokio_timer::*;
 use tokio_core::reactor::Core;
 use hyper::Client;
 use hyper_tls::HttpsConnector;
+use std::io;
 
 use pool::Pool;
 
@@ -24,8 +25,8 @@ impl HealthCheck {
         }
     }
 
-    pub fn run(&self) {
-        let mut core = trey!Core::new());
+    pub fn run(&self) -> io::Result<()> {
+        let mut core = try!(Core::new());
         let timer = Timer::default();
 
         let handle = core.handle();
@@ -67,5 +68,6 @@ impl HealthCheck {
         }).map_err(|_| {});
 
         try!(core.run(work));
+        Ok(())
     }
 }
