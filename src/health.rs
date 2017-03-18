@@ -71,8 +71,8 @@ impl HealthCheck {
             }
 
             Ok(())
-        }).map_err(|_| {});
+        }).map_err(From::from);
 
-        core.run(work).map_err(From::from)
+        core.run(work)
     }
 }
