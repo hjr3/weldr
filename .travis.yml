@@ -9,4 +9,6 @@ matrix:
   allow_failures:
     - rust: nightly
 
+cache: cargo
+
 sudo: false
