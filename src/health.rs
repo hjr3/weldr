@@ -38,7 +38,13 @@ impl HealthCheck {
         let work = timer.interval(self.interval).for_each(move |()| {
             let servers = pool.all();
             for server in servers {
-                let url = try!(server.url().join(&self.uri_path));
+                let url = match server.url().join(&self.uri_path) {
+                Ok(url) => url,
+                Err(e) => {
+                    error!("Invalid health check url: {:?}",e);
+                    return Ok(());
+                }
+            };
                 debug!("Health check {:?}", url);
 
                 let pool1 = pool.clone();
@@ -67,7 +73,6 @@ impl HealthCheck {
             Ok(())
         }).map_err(|_| {});
 
-        try!(core.run(work));
-        Ok(())
+        core.run(work).map_err(From::from)
     }
 }
