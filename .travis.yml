@@ -12,3 +12,22 @@ matrix:
 cache: cargo
 
 sudo: false
+
+install:
+- gem install fpm --no-rdoc --no-ri
+- gem install package_cloud --no-ri --no-rdoc
+
+after_success:
+- mkdir opt
+- cp target/debug/weldr opt
+- fpm -t deb -s dir -a all -n weldr -v $(cargo pkgid| awk -F'#' {'print $2'}) opt
+
+deploy:
+  auth:
+  token:
+    secure: vAnGzxP81KQOOgub6W61VtqshM/Al8zCamdwafQNx+0HyEeKWyyojLcY0sywrnUcw2YHBMdcK0i2YKQ2Hi7+PyQfTV93sWRbmENT54D+T/tNDuv6qt+bXNq77ntgJZcyTd2aPxterfwlM5NpfMCpAIM4GVxUQ+ZXHEK07nEbnCmwbga12OFzkPdZ8KwYKmeDJWhxBJh45+wINDIHm0hekXy5ElrfJJMiudI9IeBr3eHvmv1OrXj8PxeMdzDYudqUP0I9L6vhicBoyPdgxsOsTA8OHlkdordwcgSM5CVxRJQJCXERAdrOzrj3KeosQvZrZ1qAuasEc5w13xyTYtsF9SJQnOhWJ3KpfyI66Xq/L7kgwnpZ4G/EuRG8kK1YXKTXnQkEOlW3jkzIM2t44Wy7LDxHlCul4exdIVJAnMJ5DqEkYTE7e4Ij+MLCpCvdPXBqe2qd7wwcqmvI2hPi49Ls2gtwNHrpzaK7+d4oK1YypiJj16i5Bwq/vvEGzo2B/Fmwzg+uDMb5jDP0Dpmz7wN2O6mK9KoLzNJJniu5HvY4LCbi54RHdk2KwALXZcRnrSe12RMUybOzTB5uUvzJit7H7BuUzRJkfQ4QSx2qXNRCLmrMNR3LrkakVjfWA5+gDjx0m1zp0d+zvHXstyd7c9jw+SeqGqlDIdKAq4/Vw2r+vok=
+  provider: packagecloud
+  repository: maniankara/weldr
+  username: maniankara
+  dist: debian/stretch
+  skip_cleanup: true
