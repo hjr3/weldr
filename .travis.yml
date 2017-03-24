@@ -31,3 +31,5 @@ deploy:
   username: maniankara
   dist: debian/stretch
   skip_cleanup: true
+  on:
+    tags: true
