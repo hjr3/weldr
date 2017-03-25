@@ -11,7 +11,10 @@ matrix:
 
 cache: cargo
 
-sudo: false
+sudo: true
+
+services:
+- docker
 
 install:
 - gem install fpm --no-rdoc --no-ri
@@ -20,7 +23,9 @@ install:
 after_success:
 - mkdir opt
 - cp target/debug/weldr opt
-- fpm -t deb -s dir -a all -n weldr -v $(cargo pkgid| awk -F'#' {'print $2'}) opt
+# Use the same docker image as much as possible
+- docker run -v "$(pwd):/src/" cdrx/fpm-centos:7 -s dir -t deb -v 0.1.0 -n weldr -C /src  opt/weldr
+- docker run -v "$(pwd):/src/" cdrx/fpm-centos:7 -s dir -t rpm -v 0.1.0 -n weldr -C /src  opt/weldr
 
 deploy:
   auth:
