@@ -21,11 +21,13 @@ install:
 - gem install package_cloud --no-ri --no-rdoc
 
 after_success:
-- mkdir opt
-- cp target/debug/weldr opt
-# Use the same docker image as much as possible
-- docker run -v "$(pwd):/src/" cdrx/fpm-centos:7 -s dir -t deb -v 0.1.0 -n weldr -C /src  opt/weldr
-- docker run -v "$(pwd):/src/" cdrx/fpm-centos:7 -s dir -t rpm -v 0.1.0 -n weldr -C /src  opt/weldr
+- "if [ -n \"${TRAVIS_TAG}\" ]; then
+  mkdir opt;
+  cp target/debug/weldr opt;
+  # Use the same docker image as much as possible
+  docker run -v \"$(pwd):/src/\" cdrx/fpm-centos:7 -s dir -t deb -v ${TRAVIS_TAG} -n weldr -C /src  opt/weldr;
+  docker run -v \"$(pwd):/src/\" cdrx/fpm-centos:7 -s dir -t rpm -v ${TRAVIS_TAG} -n weldr -C /src  opt/weldr;
+  fi"
 
 deploy:
   auth:
