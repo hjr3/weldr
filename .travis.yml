@@ -27,6 +27,9 @@ after_success:
   # Use the same docker image as much as possible
   docker run -v \"$(pwd):/src/\" cdrx/fpm-centos:7 -s dir -t deb -v ${TRAVIS_TAG} -n weldr -C /src  opt/weldr;
   docker run -v \"$(pwd):/src/\" cdrx/fpm-centos:7 -s dir -t rpm -v ${TRAVIS_TAG} -n weldr -C /src  opt/weldr;
+  # Publish to docker hub
+  docker login -u=\"$DOCKER_USERNAME\" -p=\"$DOCKER_PASSWORD\";
+  docker push weldr/weldr\";
   fi"
 
 deploy:
