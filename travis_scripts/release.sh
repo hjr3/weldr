@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+
+function main {
+    if [ ! -z $1 ]; then
+      mkdir -p opt;
+      cp target/debug/weldr opt;
+      # Use the same docker image as much as possible
+      docker run -v $(pwd):/src/ cdrx/fpm-centos:7 -s dir -t deb -v $1 -n weldr -C /src  opt/weldr;
+      docker run -v $(pwd):/src/ cdrx/fpm-centos:7 -s dir -t rpm -v $1 -n weldr -C /src  opt/weldr;
+      # Publish to docker hub
+      docker login -u=$DOCKER_USERNAME -p=$DOCKER_PASSWORD;
+      docker build -t weldr/weldr .
+      docker push weldr/weldr;
+    fi
+}
+
+# Syntax: ./release.sh <travis_tag>
+# Usage:
+#   export DOCKER_USERNAME=myuser
+#   export DOCKER_PASSWORD=mypass
+#   ./release.sh 0.1.0
+main $*
+
