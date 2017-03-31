@@ -3,14 +3,14 @@
 function main {
     if [ ! -z $1 ]; then
       mkdir -p opt;
-      cp target/debug/weldr opt;
+      cp target/release/weldr opt;
       # Use the same docker image as much as possible
       docker run -v $(pwd):/src/ cdrx/fpm-centos:7 -s dir -t deb -v $1 -n weldr -C /src  opt/weldr;
       docker run -v $(pwd):/src/ cdrx/fpm-centos:7 -s dir -t rpm -v $1 -n weldr -C /src  opt/weldr;
       # Publish to docker hub
       docker login -u=$DOCKER_USERNAME -p=$DOCKER_PASSWORD;
-      docker build -t weldr/weldr .
-      docker push weldr/weldr;
+      docker build -t weldr/weldr:x86_64 .
+      docker push weldr/weldr:x86_64;
     fi
 }
 
