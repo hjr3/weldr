@@ -11,4 +11,32 @@ matrix:
 
 cache: cargo
 
-sudo: false
+sudo: true
+
+services:
+- docker
+
+install:
+- "if [ \"$TRAVIS_RUST_VERSION\" == \"stable\" ]; then
+  gem install fpm --no-rdoc --no-ri;
+  gem install package_cloud --no-ri --no-rdoc;
+  fi;"
+
+after_success: if [ "$TRAVIS_RUST_VERSION" == "stable" ]; then travis_scripts/release.sh $TRAVIS_TAG; fi;
+
+deploy:
+  auth:
+  token:
+    secure: "IP0V4dvGCE+r4Gi/VAvLLlYXpNg3WkSRZOi6jXQhgv8w7yLO88pQpt4sE3aGAf9O5/S5dg84iC4DYz6C2BFA0eLcIqrCQ6ZDxzJTZPx4E+/Tg9U2k+b7sPpZD+549vZsWf5/6rPmy6qNUgfO9WFqiW9+3Wyxr47Cld/MaB9JFGPD8C22s12R5cXPHld8dBaCHgST7AGulpxAJ0wyQxTfMERDjBppR/w6JNQw7PCS+Wwu6MZ2fXn0ekMHeoCAF7n/pMVLl5QkqoW6fR1vGLogcYQNYz/qT59PshgsNkmzo7W7adw8CTnDhZW/Y8MFUe06Y/LeAX+CQgUY8DkQO7K9KQSuVPk1KMIVCs6mBHFgmqwNIujn4AidVTatUArHHPIPEs1uA+qkaxe8NTrDu4a01QIksLEAcGn6dUBqQx2LtpclFym2tIXgQ2Vkexcw2SODsYdniphwrUqAlXUkk3OwkZ8QN7a/om0C5p7U5yBcNtQD72Kz8pEd29nS9HODW+VGUJI1es++NsVIbj/hozfy4ride+ZH7hMpUJcSZonF0UU/qdR2ItWa9RtglaDWA6AecybnuU34W5w/eBaS5gSiCaS8BYecjkUNiTGhoiO6Jnlft1QIQ8s8q9pGB37Up9ITshxrjGNIgYxyKmd+jM0bWHpRyREifanfs08sfN6hthw="
+  provider: packagecloud
+  repository: weldr/weldr
+  username: weldr
+  dist: debian/stretch
+  skip_cleanup: true
+  on:
+    tags: true
+
+env:
+  global:
+    - DOCKER_USERNAME=weldrci
+    - secure: "dyLWM12miLXL47EIqq9t2uAnapr14aTcnTetK2Y6qFe7w63OxTcLY/7s2zNR+Be9gLpYd2EPCeIoI5/dwP/0RUCREw0wB0ag5jPRDrl4Cf+w0Dcqyl5GIIpD9JyzpRxDMiC0DooA42JM9xJvAkbo6n0oYcSUqaoT3eG+orxTLOSWFdveq7PNolzd4r3CWKqc9sX0DZFlWyK3uOIP4JHrHjE53Ezp3Yn+me6NCy+27rmVh7LcV6t3xnOsUO0PlYEGaoFqn8l/yNinjA8NqmZqRBAQuG/QadYcBE3Q0vwBZqRPk2PnL/e86G1wbA/iV+n5qiLPKQdt8nXdACHxZaRr0YOp13VBp8MGcRtQVABlsTFRl7zGVa2WoOLNk1tXJTacpHH9PewU/wCPY7eXxtWSFwNKl4OCB5WvFo4TQ0lWN1uqbvr9JlUxAsH4KwZRW0tIaFBKStGpkNWfCP9pAr67Nq+EfE+5YUjV8dFQUy//aTWJBvvjBkQQYjLiq23mUWAhsvnbjC9vUVEVlqbompDDV4N4c/aQ+K2nzToz14Oj4zcBIbiQangeOvgC0er8I5zXRYclKIKbu5/pfHlFilJV1tKsYugP9LJaci4N9IMQiekM5m6kLioWs3ZWvmFkYUO6fITz3KURvAe0mc5U3h6YiGadtiqooZ6HIPtQcKWIjtc="
