@@ -17,9 +17,10 @@ services:
 - docker
 
 install:
-- test "$CHANNEL" = "stable" &&
-  gem install fpm --no-rdoc --no-ri &&
-  gem install package_cloud --no-ri --no-rdoc
+- "if [ \"$TRAVIS_RUST_VERSION\" == \"stable\" ]; then
+  gem install fpm --no-rdoc --no-ri;
+  gem install package_cloud --no-ri --no-rdoc;
+  fi;"
 
 after_success: if [ "$TRAVIS_RUST_VERSION" == "stable" ]; then travis_scripts/release.sh $TRAVIS_TAG; fi;
 
