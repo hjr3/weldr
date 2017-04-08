@@ -37,15 +37,13 @@ The management API will allow the addition and removal of origins from the pool.
    * The load balancer will keep that server active in the pool as long as the health succeeds.
 
 ```
-POST /servers
-
-{
-   "ip": "120.0.0.1",
-   "port": "8080",
+POST /servers 
+{ 
+    "url" : "host:port"
 }
 ```
 
-Example: `curl -vvv localhost:8687/servers -d '{"ip":"127.0.0.1", "port":"12345"}'`
+Example: `curl -vvv localhost:8687/servers -d '{"url":"127.0.0.1:12345"}'`
 
 ### Removing A Server
 
