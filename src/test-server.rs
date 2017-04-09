@@ -7,6 +7,8 @@ extern crate env_logger;
 use std::env;
 use std::path::Path;
 use rustful::{Server, Context, Response, TreeRouter};
+use rustful::server::Host;
+
 
 fn index(_context: Context, response: Response) {
     response.send("Hello World");
@@ -22,14 +24,12 @@ fn large(_context: Context, response: Response) {
         .or_else(|e| e.ignore_send_error());
 }
 
-fn main() {
+fn launch_test_server(port: u16) {
 
     let threads = env::var("THREADS").ok().and_then(|t| t.parse::<usize>().ok().or(None));
 
-    env_logger::init().expect("Failed to init logger");
-
     Server {
-            host: 12346.into(),
+            host: Host::any_v4(port),
             handlers: insert_routes!{
             TreeRouter::new() => {
                 "/" => Get: index as fn(Context, Response),
@@ -42,3 +42,14 @@ fn main() {
         .run()
         .expect("Could not start server");
 }
+
+fn main() {
+
+    env_logger::init().expect("Failed to init logger");
+
+    let test_server_port = env::args().nth(1).unwrap_or("12345".to_string());
+    let test_server_port: u16 = test_server_port.parse().unwrap();
+
+    launch_test_server(test_server_port);
+}
+
