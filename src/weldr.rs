@@ -6,7 +6,8 @@ use std::net::SocketAddr;
 use std::thread;
 use std::time::Duration;
 
-use weldr::pool::{Pool, Server};
+use weldr::server::Server;
+use weldr::pool::Pool;
 use weldr::mgmt;
 use weldr::health;
 
