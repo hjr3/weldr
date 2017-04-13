@@ -1,267 +1,228 @@
-use std::sync::{Arc, RwLock};
-use std::str::FromStr;
-use hyper::Url;
+use std::io;
+use std::rc::Rc;
+use std::cell::RefCell;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Stats {
-    failure: usize,
-    success: usize,
-}
+use futures::Future;
 
-impl Stats {
-    pub fn new() -> Stats {
-        Stats {
-            failure: 0,
-            success: 0,
-        }
-    }
+use hyper::{self, server};
 
-    pub fn inc_success(&mut self) {
-        self.success += 1;
-    }
-
-    pub fn inc_failure(&mut self) {
-        self.failure += 1;
-    }
-
-    pub fn success(&self) -> usize {
-        self.success
-    }
-
-    pub fn failure(&self) -> usize {
-        self.failure
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Server {
-    url: Url,
-    map_host: bool,
-    hc_failure: usize,
-    stats: Stats,
-}
-
-impl Server {
-    pub fn new(url: Url) -> Server {
-        Server {
-            url: url,
-            map_host: false,
-            hc_failure: 0,
-            stats: Stats::new(),
-        }
-    }
-
-    pub fn url(&self) -> Url {
-        self.url.clone()
-    }
-
-    pub fn stats_mut(&mut self) -> &mut Stats {
-        &mut self.stats
-    }
-
-    pub fn map_host(&self) -> bool {
-        self.map_host
-    }
-
-    pub fn with_map_host(self, map_host: bool) -> Self {
-        Server {
-            url: self.url,
-            map_host: map_host,
-            hc_failure: self.hc_failure,
-            stats: self.stats,
-        }
-    }
-}
-
-impl FromStr for Server {
-    type Err = ::hyper::error::ParseError;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let url: Url = if s.starts_with("http") {
-            try!(s.parse())
-        } else {
-            try!(format!("http://{}", s).parse())
-        };
-        Ok(Server::new(url))
-    }
-}
+use server::Server;
+use stats::Stats;
 
 /// A round-robin pool for servers
 ///
 /// A simple pool that stores socket addresses and, for now, clones them out.
 ///
 /// Inspired by https://github.com/NicolasLM/nucleon/blob/master/src/backend.rs
-#[derive(Clone)]
+#[derive(Clone, Debug, Default)]
 pub struct Pool {
-    inner: Arc<RwLock<inner::Pool>>,
+    inner: Rc<RefCell<InnerPool>>,
 }
 
 impl Pool {
-    pub fn with_servers(backends: Vec<Server>) -> Pool {
-        let inner = inner::Pool::new(backends);
-
-        Pool {
-            inner: Arc::new(RwLock::new(inner)),
-        }
-    }
-
-    pub fn new() -> Pool {
-        Pool::with_servers(vec![])
-    }
-
-    /// Get a `Server` from the pool
+    /// Send a request to the pool
     ///
-    /// The pool may be exhausted of eligible addresses to connect to. The client is expected to
-    /// handle this scenario.
-    pub fn get(&self) -> Option<Server> {
-        self.inner.write().expect("Lock is poisoned").get()
+    /// The pool may be exhausted of eligible addresses to connect to and will return an error.
+    pub fn request<F>(&self, f: F) -> Box<Future<Item=server::Response, Error=hyper::Error>>
+        where F: FnOnce(&Server) -> Box<Future<Item=server::Response, Error=hyper::Error>>
+    {
+        match self.inner.borrow_mut().get() {
+            Some(backend) => {
+                let backend1 = backend.clone();
+                Box::new(f(&backend.borrow().server).then(move |res| {
+                    match res {
+                        Ok(res) => {
+                            if res.status().is_server_error() {
+                                backend1.borrow_mut().stats_mut().inc_failure();
+                            } else {
+                                backend1.borrow_mut().stats_mut().inc_success();
+                            }
+                            ::futures::finished(res)
+                        }
+                        Err(e) => {
+                            backend1.borrow_mut().stats_mut().inc_failure();
+                            ::futures::failed(e)
+                        }
+                    }
+                }))
+            }
+            None => {
+                let e = io::Error::new(io::ErrorKind::Other, "Pool is exhausted of servers");
+                // TODO should this return a Bad Gateway error ?
+                Box::new(::futures::failed(hyper::Error::Io(e)))
+            }
+        }
     }
 
     /// Returns all `Server` from the pool
     pub fn all(&self) -> Vec<Server> {
-        self.inner.write().expect("Lock is poisoned").all()
+        self.inner.borrow_mut().all()
     }
 
     /// Add a new server to the pool
     ///
-    /// Currently, it is possible to add the same server more then once
-    pub fn add(&self, server: Server) {
-        self.inner.write().expect("Lock is poisoned").add(server)
+    /// If the server is already added, then it cannot be added again. The function will return
+    /// false if the server already exists.
+    pub fn add(&self, server: Server) -> bool {
+        self.inner.borrow_mut().add(Backend::new(server))
     }
 
-    /// Remove a server from the pool
+    /// Remove a server in the pool
     ///
-    /// This will remove all instance of the given server. See `add` method for details on
-    /// duplicate servers.
     pub fn remove(&self, backend: &Server) {
-        self.inner.write().expect("Lock is poisoned").remove(backend)
+        self.inner.borrow_mut().remove(backend)
     }
 }
 
-pub mod inner {
-    use super::Server;
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ServerState {
+    Active,
+    //Down,
+    //Disabled,
+}
 
-    pub struct Pool {
-        backends: Vec<Server>,
-        last_used: usize,
-    }
+#[derive(Debug, Eq, PartialEq)]
+pub struct Backend {
+    server: Server,
+    state: ServerState,
+    stats: Stats,
+}
 
-    impl Pool {
-        pub fn new(backends: Vec<Server>) -> Pool {
-            Pool {
-                backends: backends,
-                last_used: 0,
-            }
-        }
-
-        pub fn get(&mut self) -> Option<Server> {
-            if self.backends.is_empty() {
-                warn!("Pool is exhausted of socket addresses");
-                return None;
-            }
-            self.last_used = (self.last_used + 1) % self.backends.len();
-            self.backends.get(self.last_used).map(|server| {
-                debug!("Pool is cloaning (hehe) out {:?}", server);
-                server.clone()
-            })
-        }
-
-        pub fn all(&mut self) -> Vec<Server> {
-            if self.backends.is_empty() {
-                warn!("Pool is exhausted of socket addresses");
-                return Vec::new();
-            }
-            self.backends.clone()
-        }
-
-        pub fn add(&mut self, server: Server) {
-            self.backends.push(server);
-        }
-
-        pub fn remove(&mut self, server: &Server) {
-            self.backends.retain(|s| s != server);
+impl Backend {
+    pub fn new(server: Server) -> Backend {
+        Backend {
+            server: server,
+            state: ServerState::Active,
+            stats: Stats::new(),
         }
     }
 
+    pub fn stats_mut(&mut self) -> &mut Stats {
+        &mut self.stats
+    }
+}
 
+#[derive(Debug, Default)]
+pub struct InnerPool {
+    backends: Vec<Rc<RefCell<Backend>>>,
+    last_used: usize,
+}
+
+impl InnerPool {
+
+    // this is only used in test code
     #[cfg(test)]
-    mod tests {
-        use super::Pool;
-        use super::Server;
-        use std::str::FromStr;
-        use hyper::Url;
+    fn new(backends: Vec<Backend>) -> InnerPool {
+        InnerPool {
+            backends: backends.into_iter().map(|b| Rc::new(RefCell::new(b))).collect(),
+            last_used: 0,
+        }
+    }
 
-        #[test]
-        fn test_from_str() {
-            let backend1: Server = FromStr::from_str("http://127.0.0.1:6000").unwrap();
-            assert_eq!(backend1.url(), Url::parse("http://127.0.0.1:6000").unwrap());
+    fn get(&mut self) -> Option<Rc<RefCell<Backend>>> {
+        if self.backends.is_empty() {
+            warn!("Pool is exhausted of socket addresses");
+            return None;
+        }
+        self.last_used = (self.last_used + 1) % self.backends.len();
+        self.backends.get(self.last_used).map(|backend| {
+            debug!("Pool is cloaning (hehe) out {:?}", backend);
+            // TODO make this Rc ?
+            backend.clone()
+        })
+    }
 
-            let backend2: Server = FromStr::from_str("https://10.10.10.10:1010").unwrap();
-            assert_eq!(backend2.url(), Url::parse("https://10.10.10.10:1010").unwrap());
-
-            let backend3: Server = FromStr::from_str("8.8.8.8:6543").unwrap();
-            assert_eq!(backend3.url(), Url::parse("http://8.8.8.8:6543").unwrap());
+    fn all(&mut self) -> Vec<Server> {
+        if self.backends.is_empty() {
+            warn!("Pool is exhausted of socket addresses");
+            return Vec::new();
         }
 
-        #[test]
-        fn test_rrb_backend() {
-            let backends: Vec<Server> = vec![
-                FromStr::from_str("127.0.0.1:6000").unwrap(),
-                FromStr::from_str("127.0.0.1:6001").unwrap(),
-            ];
+        // TODO fix this to not need to clone the server. We can probably just pass the
+        // entire backend to the mgmt API and use the server value as a reference.
+        self.backends.iter().map(|backend| backend.borrow().server.clone()).collect()
+    }
 
-            let mut rrb = Pool::new(backends);
-            assert_eq!(2, rrb.backends.len());
-
-            let first = rrb.get().unwrap();
-            let second = rrb.get().unwrap();
-            let third = rrb.get().unwrap();
-            let fourth = rrb.get().unwrap();
-            assert_eq!(first, third);
-            assert_eq!(second, fourth);
-            assert!(first != second);
+    fn add(&mut self, backend: Backend) -> bool {
+        let backend = Rc::new(RefCell::new(backend));
+        if self.backends.contains(&backend) {
+            return false;
         }
 
-        #[test]
-        fn test_empty_rrb_backend() {
-            let backends= vec![];
-            let mut rrb = Pool::new(backends);
-            assert_eq!(0, rrb.backends.len());
-            assert!(rrb.get().is_none());
-            assert!(rrb.all().is_empty());
-        }
+        self.backends.push(backend);
+        true
+    }
 
-        #[test]
-        fn test_add_to_rrb_backend() {
-            let mut rrb = Pool::new(vec![]);
-            assert!(rrb.get().is_none());
-            let server: Server = FromStr::from_str("127.0.0.1:6000").unwrap();
-            rrb.add(server.clone());
-            assert!(rrb.get().is_some());
-            assert_eq!(vec![server], rrb.all());
-        }
+    fn remove(&mut self, server: &Server) {
+        self.backends.retain(|b| &b.borrow().server != server);
+    }
+}
 
-        #[test]
-        fn test_remove_from_rrb_backend() {
-            let mut rrb = Pool::new(vec![]);
-            let server1: Server = FromStr::from_str("127.0.0.1:6000").unwrap();
-            let server2: Server = FromStr::from_str("127.0.0.1:6001").unwrap();
-            rrb.add(server1.clone());
-            rrb.add(server2.clone());
-            assert_eq!(2, rrb.backends.len());
-            assert_eq!(vec![server1.clone(), server2.clone()], rrb.all());
+#[cfg(test)]
+mod tests {
+    use super::{Backend, InnerPool};
+    use server::Server;
+    use std::str::FromStr;
 
-            let unknown_server: Server = FromStr::from_str("127.0.0.1:1234").unwrap();
-            rrb.remove(&unknown_server);
-            assert_eq!(2, rrb.backends.len());
-            assert_eq!(vec![server1.clone(), server2.clone()], rrb.all());
+    #[test]
+    fn test_rrb_backend() {
+        let backends: Vec<Backend> = vec![
+            Backend::new(Server::new(FromStr::from_str("http://127.0.0.1:6000").unwrap(), false)),
+            Backend::new(Server::new(FromStr::from_str("http://127.0.0.1:6001").unwrap(), false)),
+        ];
 
-            rrb.remove(&server1);
-            assert_eq!(1, rrb.backends.len());
-            assert_eq!(vec![server2.clone()], rrb.all());
+        let mut rrb = InnerPool::new(backends);
+        assert_eq!(2, rrb.backends.len());
 
-            rrb.remove(&server2);
-            assert_eq!(0, rrb.backends.len());
-            assert!(rrb.all().is_empty());
-        }
+        let first = rrb.get().unwrap();
+        let second = rrb.get().unwrap();
+        let third = rrb.get().unwrap();
+        let fourth = rrb.get().unwrap();
+        assert_eq!(first, third);
+        assert_eq!(second, fourth);
+        assert!(first != second);
+    }
+
+    #[test]
+    fn test_empty_rrb_backend() {
+        let backends= vec![];
+        let mut rrb = InnerPool::new(backends);
+        assert_eq!(0, rrb.backends.len());
+        assert!(rrb.get().is_none());
+        assert!(rrb.all().is_empty());
+    }
+
+    #[test]
+    fn test_add_to_rrb_backend() {
+        let mut rrb = InnerPool::new(vec![]);
+        assert!(rrb.get().is_none());
+        let server = Server::new(FromStr::from_str("http://127.0.0.1:6000").unwrap(), false);
+        rrb.add(Backend::new(server.clone()));
+        assert!(rrb.get().is_some());
+        assert_eq!(vec![server], rrb.all());
+    }
+
+    #[test]
+    fn test_remove_from_rrb_backend() {
+        let mut rrb = InnerPool::new(vec![]);
+        let server1 = Server::new(FromStr::from_str("http://127.0.0.1:6000").unwrap(), false);
+        let server2 = Server::new(FromStr::from_str("http://127.0.0.1:6001").unwrap(), false);
+        rrb.add(Backend::new(server1.clone()));
+        rrb.add(Backend::new(server2.clone()));
+        assert_eq!(2, rrb.backends.len());
+        assert_eq!(vec![server1.clone(), server2.clone()], rrb.all());
+
+        let unknown_server = Server::new(FromStr::from_str("http://127.0.0.1:1234").unwrap(), false);
+        rrb.remove(&unknown_server);
+        assert_eq!(2, rrb.backends.len());
+        assert_eq!(vec![server1.clone(), server2.clone()], rrb.all());
+
+        rrb.remove(&server1);
+        assert_eq!(1, rrb.backends.len());
+        assert_eq!(vec![server2.clone()], rrb.all());
+
+        rrb.remove(&server2);
+        assert_eq!(0, rrb.backends.len());
+        assert!(rrb.all().is_empty());
     }
 }

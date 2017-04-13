@@ -40,12 +40,11 @@ The management API will allow the addition and removal of origins from the pool.
 POST /servers
 
 {
-   "ip": "120.0.0.1",
-   "port": "8080",
+   "url": "http://120.0.0.1"
 }
 ```
 
-Example: `curl -vvv localhost:8687/servers -d '{"ip":"127.0.0.1", "port":"12345"}'`
+Example: `curl -vvv localhost:8687/servers -d '{"url":"http://127.0.0.1"}'`
 
 ### Removing A Server
 

@@ -1,43 +1,72 @@
-#[macro_use] extern crate rustful;
-
 extern crate log;
 extern crate env_logger;
+extern crate futures;
+extern crate hyper;
 
 use std::env;
+use std::fs::File;
+use std::io::{Read, BufReader};
+use std::net::SocketAddr;
 use std::path::Path;
-use rustful::{Server, Context, Response, TreeRouter};
 
-fn index(_context: Context, response: Response) {
-    response.send("Hello World");
-}
+use hyper::{Get, StatusCode};
+use hyper::server::{Http, Service, Request, Response};
+use hyper::header::{ContentLength, ContentType};
+use hyper::mime::{Mime, TopLevel, SubLevel};
 
-fn large(_context: Context, response: Response) {
+fn large() -> Response {
     let pwd = env!("CARGO_MANIFEST_DIR");
     let path = format!("{}/tests/jquery-1.7.1.min.js", pwd);
     let path = Path::new(&path);
 
-    let _ = response.send_file(path)
-        .or_else(|e| e.send_not_found("the file was not found"))
-        .or_else(|e| e.ignore_send_error());
+    let file = File::open(path).expect("Failed to open file");
+    let mut reader = BufReader::new(file);
+
+    let mut body = Vec::new();
+    reader.read_to_end(&mut body).expect("Failed to read file");
+
+    Response::new()
+        .with_header(ContentLength(body.len() as u64))
+        .with_header(ContentType(Mime(TopLevel::Application, SubLevel::Javascript, vec![])))
+        .with_body(body)
 }
 
+#[derive(Clone, Copy)]
+struct TestServer;
+
+impl Service for TestServer {
+    type Request = Request;
+    type Response = Response;
+    type Error = hyper::Error;
+    type Future = ::futures::Finished<Response, hyper::Error>;
+
+    fn call(&self, req: Request) -> Self::Future {
+        ::futures::finished(match (req.method(), req.path()) {
+            (&Get, "/") => {
+                let body = "Hello World";
+                Response::new()
+                    .with_header(ContentLength(body.len() as u64))
+                    .with_body(body)
+            },
+            (&Get, "/large") => {
+                large()
+            },
+            _ => {
+                Response::new()
+                    .with_status(StatusCode::NotFound)
+            }
+        })
+    }
+}
+
+
+
 fn main() {
-
-    let threads = env::var("THREADS").ok().and_then(|t| {
-        t.parse::<usize>().ok().or(None)
-    });
-
     env_logger::init().expect("Failed to init logger");
 
-    Server {
-        host: 12345.into(),
-        handlers: insert_routes!{
-            TreeRouter::new() => {
-                "/" => Get: index as fn(Context, Response),
-                "/large" => Get: large as fn(Context, Response),
-            }
-        },
-        threads: threads,
-        ..Server::default()
-    }.run().expect("Could not start server");
+    let port = env::args().nth(1).unwrap_or("12345".to_string());
+
+    let addr = format!("127.0.0.1:{}", port).parse::<SocketAddr>().expect("Failed to parse socket addr");
+    let server = Http::new().bind(&addr, || Ok(TestServer)).unwrap();
+    server.run().unwrap();
 }
