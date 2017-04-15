@@ -305,6 +305,10 @@ pub fn run_with<F>(mut core: Core, listener: TcpListener, admin_listener: TcpLis
 }
 
 fn proxy(socket: TcpStream, addr: SocketAddr, pool: Pool, handle: &Handle) {
+
+    // disable Nagle's algo
+    // https://github.com/hyperium/hyper/issues/944
+    socket.set_nodelay(true).unwrap();
     let client = Client::configure()
         .connector(HttpsConnector::new(4, handle))
         .build(&handle);
