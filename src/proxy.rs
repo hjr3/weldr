@@ -228,21 +228,27 @@ impl Service for Proxy {
     }
 }
 
+//TODO: to be removed soon after conf file is implemented
+// Represents the weldr config file
+pub struct ConfFile {
+    pub timeout: u64,
+}
+
 /// Run server with default Core
-pub fn run(proxy_addr: SocketAddr, admin_addr: SocketAddr, pool: Pool) -> io::Result<()> {
+pub fn run(proxy_addr: SocketAddr, admin_addr: SocketAddr, pool: Pool, conf: ConfFile) -> io::Result<()> {
     let core = Core::new()?;
     let handle = core.handle();
 
     let listener = TcpListener::bind(&proxy_addr, &handle)?;
     let admin_listener = TcpListener::bind(&admin_addr, &handle)?;
-    run_with(core, listener, admin_listener, pool, future::empty())
+    run_with(core, listener, admin_listener, pool, future::empty(), conf)
 }
 
 /// Run server with specified Core, TcpListener, Pool
 ///
 /// This is useful for integration testing where the port is set to 0 and the test code needs to
 /// determine the local addr.
-pub fn run_with<F>(mut core: Core, listener: TcpListener, admin_listener: TcpListener, pool: Pool, shutdown_signal: F) -> io::Result<()>
+pub fn run_with<F>(mut core: Core, listener: TcpListener, admin_listener: TcpListener, pool: Pool, shutdown_signal: F, conf: ConfFile) -> io::Result<()>
     where F: Future<Item = (), Error = hyper::Error>,
 {
     let handle = core.handle();
@@ -250,7 +256,7 @@ pub fn run_with<F>(mut core: Core, listener: TcpListener, admin_listener: TcpLis
     let timer = Timer::default();
 
     // FIXME configure health check timer
-    let health_timer = timer.interval(Duration::from_secs(5)).map_err(|e| {
+    let health_timer = timer.interval(Duration::from_secs(conf.timeout)).map_err(|e| {
         io::Error::new(io::ErrorKind::Other, e)
     });
 
@@ -432,5 +438,11 @@ mod tests {
         assert_eq!(false, given.has::<ProxyAuthenticate>());
         assert_eq!(false, given.has::<Trailer>());
         assert_eq!(false, given.has::<header::Upgrade>());
+    }
+
+    #[test]
+    fn test_conf_file() {
+        let conf = ConfFile {timeout: 10};
+        assert_eq!(10, conf.timeout);
     }
 }

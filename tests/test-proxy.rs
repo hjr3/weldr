@@ -22,6 +22,7 @@ use hyper::header::{ContentLength, TransferEncoding};
 
 use weldr::server::Server;
 use weldr::pool::Pool;
+use weldr::proxy::ConfFile;
 
 #[derive(Clone, Copy)]
 struct Origin;
@@ -134,7 +135,8 @@ fn with_server<R> (req: R) where R: Fn(String, Handle) -> Box<Future<Item=(), Er
         listener,
         admin_listener,
         pool.clone(),
-        shutdown_signal).expect("Failed to start server");
+        shutdown_signal,
+        ConfFile {timeout: 5}).expect("Failed to start server");
 }
 
 fn client_send_request(request: client::Request, handle: &Handle)
