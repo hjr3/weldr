@@ -136,7 +136,7 @@ fn with_server<R> (req: R) where R: Fn(String, Handle) -> Box<Future<Item=(), Er
         admin_listener,
         pool.clone(),
         shutdown_signal,
-        ConfFile {timeout: 5}).expect("Failed to start server");
+        &ConfFile {timeout: 5, health_uri: "/".to_string()}).expect("Failed to start server");
 }
 
 fn client_send_request(request: client::Request, handle: &Handle)

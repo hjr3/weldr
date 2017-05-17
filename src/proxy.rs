@@ -232,10 +232,11 @@ impl Service for Proxy {
 // Represents the weldr config file
 pub struct ConfFile {
     pub timeout: u64,
+    pub health_uri: String,
 }
 
 /// Run server with default Core
-pub fn run(proxy_addr: SocketAddr, admin_addr: SocketAddr, pool: Pool, conf: ConfFile) -> io::Result<()> {
+pub fn run(proxy_addr: SocketAddr, admin_addr: SocketAddr, pool: Pool, conf: &ConfFile) -> io::Result<()> {
     let core = Core::new()?;
     let handle = core.handle();
 
@@ -248,7 +249,7 @@ pub fn run(proxy_addr: SocketAddr, admin_addr: SocketAddr, pool: Pool, conf: Con
 ///
 /// This is useful for integration testing where the port is set to 0 and the test code needs to
 /// determine the local addr.
-pub fn run_with<F>(mut core: Core, listener: TcpListener, admin_listener: TcpListener, pool: Pool, shutdown_signal: F, conf: ConfFile) -> io::Result<()>
+pub fn run_with<F>(mut core: Core, listener: TcpListener, admin_listener: TcpListener, pool: Pool, shutdown_signal: F, conf: &ConfFile) -> io::Result<()>
     where F: Future<Item = (), Error = hyper::Error>,
 {
     let handle = core.handle();
@@ -276,7 +277,7 @@ pub fn run_with<F>(mut core: Core, listener: TcpListener, admin_listener: TcpLis
             }
             Merged3Item::Third(()) => {
                 info!("health check");
-                health::run(pool.clone(), &handle);
+                health::run(pool.clone(), &handle, &conf);
             }
             Merged3Item::FirstSecond((socket, addr), (socket2, addr2)) => {
                 proxy(socket, addr, pool.clone(), &handle);
@@ -285,18 +286,18 @@ pub fn run_with<F>(mut core: Core, listener: TcpListener, admin_listener: TcpLis
             Merged3Item::SecondThird((socket, addr), ()) => {
                 mgmt(socket, addr, pool.clone(), &handle);
                 info!("health check");
-                health::run(pool.clone(), &handle);
+                health::run(pool.clone(), &handle, &conf);
             }
             Merged3Item::FirstThird((socket, addr), ()) => {
                 proxy(socket, addr, pool.clone(), &handle);
                 info!("health check");
-                health::run(pool.clone(), &handle);
+                health::run(pool.clone(), &handle, &conf);
             }
             Merged3Item::All((socket, addr), (socket2, addr2), ()) => {
                 proxy(socket, addr, pool.clone(), &handle);
                 mgmt(socket2, addr2, pool.clone(), &handle);
                 info!("health check");
-                health::run(pool.clone(), &handle);
+                health::run(pool.clone(), &handle, &conf);
             }
         }
 
@@ -442,7 +443,8 @@ mod tests {
 
     #[test]
     fn test_conf_file() {
-        let conf = ConfFile {timeout: 10};
+        let conf = ConfFile {timeout: 10, health_uri: "/heart_beat".to_string()};
         assert_eq!(10, conf.timeout);
+        assert_eq!("/heart_beat", conf.health_uri);
     }
 }
