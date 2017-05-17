@@ -10,7 +10,9 @@ use hyper::Url;
 
 use weldr::server::Server;
 use weldr::pool::Pool;
-//use weldr::health;
+use weldr::proxy::ConfFile;
+
+
 
 fn main() {
     env_logger::init().expect("Failed to start logger");
@@ -29,11 +31,12 @@ fn main() {
     let admin_ip = env::args().nth(3).unwrap_or("127.0.0.1:8687".to_string());
     let admin_addr = admin_ip.parse::<SocketAddr>().unwrap();
 
+    let conf_file = ConfFile { timeout: 5}; // set timeout in secs
     //let p = pool.clone();
     //let _ = thread::Builder::new().name("health-check".to_string()).spawn(move || {
     //    let checker = health::HealthCheck::new(Duration::from_millis(1000), p, "/".to_owned());
     //    checker.run();
     //}).expect("Failed to create proxy thread");
 
-    weldr::proxy::run(addr, admin_addr, pool).expect("Failed to start server");
+    weldr::proxy::run(addr, admin_addr, pool, conf_file).expect("Failed to start server");
 }
