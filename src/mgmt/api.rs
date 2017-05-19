@@ -12,6 +12,7 @@ use hyper::mime::{Mime, TopLevel, SubLevel, Attr, Value};
 
 use server::Server;
 use pool::Pool;
+use super::manager::Manager;
 
 // HATEOAS links: https://en.wikipedia.org/wiki/HATEOAS
 #[derive(Debug, RustcDecodable, RustcEncodable)]
@@ -105,7 +106,7 @@ fn get_servers(pool: &Pool) -> Response {
     all_servers_reponse(pool)
 }
 
-fn add_server(request: Request, pool: Pool) -> Box<Future<Item = Response, Error = hyper::Error>> {
+fn add_server(request: Request, pool: Pool, manager: Manager, handle: Handle) -> Box<Future<Item = Response, Error = hyper::Error>> {
 
     let work = request.body().fold(Vec::new(), |mut v, chunk| {
         v.extend(&chunk[..]);
@@ -121,6 +122,9 @@ fn add_server(request: Request, pool: Pool) -> Box<Future<Item = Response, Error
                 let backend = Server::new(backend, true);
                 pool.add(backend);
                 debug!("Added new server to pool");
+
+                let backend = server.url.parse::<Url>().expect("Failed to parse server url");
+                manager.publish_new_server(backend, handle);
 
                 all_servers_reponse(&pool)
             }
@@ -158,13 +162,15 @@ fn add_server(request: Request, pool: Pool) -> Box<Future<Item = Response, Error
 pub struct Mgmt {
     pool: Pool,
     handle: Handle,
+    manager: Manager,
 }
 
 impl Mgmt {
-    pub fn new(pool: Pool, handle: Handle) -> Mgmt {
+    pub fn new(pool: Pool, handle: Handle, manager: Manager) -> Mgmt {
         Mgmt {
             pool: pool,
             handle: handle,
+            manager: manager,
         }
     }
 }
@@ -184,7 +190,7 @@ impl Service for Mgmt {
                 Box::new(::futures::finished(get_servers(&self.pool)))
             },
             (&Post, "/servers") => {
-                add_server(req, self.pool.clone())
+                add_server(req, self.pool.clone(), self.manager.clone(), self.handle.clone())
             },
             (&Delete, "/servers") => {
                 let body = "Remove server";

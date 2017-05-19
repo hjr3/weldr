@@ -22,7 +22,6 @@ use hyper::header::{ContentLength, TransferEncoding};
 
 use weldr::server::Server;
 use weldr::pool::Pool;
-use weldr::proxy::ConfFile;
 
 #[derive(Clone, Copy)]
 struct Origin;
@@ -107,7 +106,7 @@ fn with_server<R> (req: R) where R: Fn(String, Handle) -> Box<Future<Item=(), Er
     let listener = TcpListener::bind(&addr, &handle).unwrap();
     let proxy_addr = listener.local_addr().unwrap();
 
-    let admin_listener = TcpListener::bind(&addr, &handle).unwrap();
+    let _admin_listener = TcpListener::bind(&addr, &handle).unwrap();
 
     let (tx, rx) = channel();
     let _h2 = thread::spawn(move || {
@@ -133,10 +132,8 @@ fn with_server<R> (req: R) where R: Fn(String, Handle) -> Box<Future<Item=(), Er
     weldr::proxy::run_with(
         core,
         listener,
-        admin_listener,
         pool.clone(),
-        shutdown_signal,
-        &ConfFile {timeout: 5, health_uri: "/".to_string()}).expect("Failed to start server");
+        shutdown_signal).expect("Failed to start server");
 }
 
 fn client_send_request(request: client::Request, handle: &Handle)
