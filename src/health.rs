@@ -4,18 +4,16 @@ use hyper::Client;
 use hyper_tls::HttpsConnector;
 
 use pool::Pool;
+use proxy::ConfFile;
 
-pub fn run(pool: Pool, handle: &Handle) {
+pub fn run(pool: Pool, handle: &Handle, conf: &ConfFile) {
     let client = Client::configure()
         .connector(HttpsConnector::new(4, &handle))
         .build(&handle);
 
-    // FIXME cofnigure health check uri path
-    let uri_path = "/";
-
     let servers = pool.all();
     for server in servers {
-        let url = match server.url().join(&uri_path) {
+        let url = match server.url().join(&conf.health_uri) {
             Ok(url) => url,
             Err(e) => {
                 error!("Invalid health check url: {:?}",e);
