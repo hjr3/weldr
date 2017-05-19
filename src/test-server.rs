@@ -59,8 +59,6 @@ impl Service for TestServer {
     }
 }
 
-
-
 fn main() {
     env_logger::init().expect("Failed to init logger");
 

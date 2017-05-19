@@ -10,20 +10,40 @@ The goal is to build an _AWS ELB_-like reverse proxy that works well in the dyna
 
 An eventual goal is to have the pool managed by Raft. This will allow a cluster of redundant weldr servers. This will allow an active/passive setup out of the box. Note: The [raft-rs](https://github.com/hoverbear/raft-rs) crate does not currently support dynamic membership.
 
+## Requirements
+
+   * capnproto
+   * A TLS library compatible with rust-tls
+
+### Installing on Ubuntu
+
+```
+$ apt-get update && apt-get install gcc libssl-dev pkg-config capnproto
+```
+
+### Docker
+
+See [DOCKER.md](./DOCKER.md) for details.
+
 ## Running Protype
 
-   * `RUST_LOG=weldr cargo run --bin weldr` - start the proxy
-   * `cargo run --bin test-server` - start test origin server
-   * `curl -vvv localhost:8080` - send a request
-   * `curl -vvv localhost:8080/large` - send a request and get back a large response
+   * Start the proxy - `RUST_LOG=weldr cargo run --bin weldr`
+   * Add a server to the pool - `curl localhost:8687/servers -d '{"url":"http://127.0.0.1:12345"}'`
+   * Start test origin server - `cargo run --bin test-server` - start test origin server
+   * Send a request - `curl -vvv localhost:8080/`
+   * Send a request and get back a large response - `curl -vvv localhost:8080/large`
 
 ### Running Tests
 
 `RUST_LOG=test_proxy,weldr cargo test` will execute the tests and provide log level output for both the proxy and the integration tests.
 
+### Benchmarks
+
+See [benchmark/](./benchmark) for details.
+
 ## High Level Roadmap
 
-   * Initial [0.1.0] release.
+   * Initial [0.1.0](https://github.com/hjr3/weldr/releases/tag/0.1.0<Paste>) release.
    * Currently working on a [0.2.0](https://github.com/hjr3/weldr/milestone/2) release.
 
 ## Proposed Management API Design
