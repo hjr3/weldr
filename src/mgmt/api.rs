@@ -1,5 +1,4 @@
-use rustc_serialize::Encodable;
-use rustc_serialize::json::{self, Encoder, EncodeResult};
+use serde_json;
 
 use futures::{future, Future, Stream};
 
@@ -15,26 +14,25 @@ use pool::Pool;
 use super::manager::Manager;
 
 // HATEOAS links: https://en.wikipedia.org/wiki/HATEOAS
-#[derive(Debug, RustcDecodable, RustcEncodable)]
+#[derive(Debug, Serialize, Deserialize)]
 struct Link {
     pub rel: String,
     pub href: String,
     pub method: Option<String>,
 }
 
-#[derive(Debug, RustcDecodable, RustcEncodable)]
+#[derive(Debug, Serialize, Deserialize)]
 struct PoolServers {
     pub servers: Vec<PoolServer>,
     pub links: Option<Vec<Link>>,
 }
 
-#[derive(Debug, RustcDecodable, RustcEncodable)]
+#[derive(Debug, Serialize, Deserialize)]
 struct PoolServer {
     pub url: String,
     pub links: Option<Vec<Link>>,
 }
-
-#[derive(Debug, RustcDecodable, RustcEncodable)]
+#[derive(Debug, Serialize, Deserialize)]
 struct Index {
     pub about: String,
     pub links: Vec<Link>,
@@ -50,22 +48,13 @@ fn index() -> Response {
         }]
     };
 
-    let body = encode_pretty(&index).expect("Failed to encode into json");
+    let body = serde_json::to_string_pretty(&index).expect("Failed to encode into json");
 
     Response::new()
         .with_header(ContentLength(body.len() as u64))
         .with_header(ContentType(Mime(TopLevel::Application, SubLevel::Json,
                                       vec![(Attr::Charset, Value::Utf8)])))
         .with_body(body)
-}
-
-fn encode_pretty<T: Encodable>(object: &T) -> EncodeResult<String> {
-    let mut s = String::new();
-    {
-        let mut encoder = Encoder::new_pretty(&mut s);
-        try!(object.encode(&mut encoder));
-    }
-    Ok(s)
 }
 
 fn all_servers_reponse(pool: &Pool) -> Response {
@@ -93,7 +82,7 @@ fn all_servers_reponse(pool: &Pool) -> Response {
         }]),
     };
 
-    let body = encode_pretty(&pool_servers).expect("Failed to encode into json");
+    let body = serde_json::to_string_pretty(&pool_servers).expect("Failed to encode into json");
 
     Response::new()
         .with_header(ContentLength(body.len() as u64))
@@ -114,7 +103,7 @@ fn add_server(request: Request, pool: Pool, manager: Manager, handle: Handle) ->
     }).and_then(move |chunks| {
         let body = String::from_utf8(chunks).unwrap();
 
-        let response = match json::decode::<PoolServer>(&body) {
+        let response = match serde_json::from_str::<PoolServer>(&body) {
             Ok(server) => {
                 debug!("body = {:?}", server);
 
