@@ -1,6 +1,8 @@
+use std::str::FromStr;
+
 use futures::Future;
 use tokio_core::reactor::Handle;
-use hyper::Client;
+use hyper::{Client, Uri};
 use hyper_tls::HttpsConnector;
 
 use pool::Pool;
@@ -13,7 +15,8 @@ pub fn run(pool: Pool, handle: &Handle, conf: &Config) {
 
     let servers = pool.all();
     for server in servers {
-        let url = match server.url().join(&conf.health.uri) {
+        let url = format!("{}{}", server.url(), &conf.health.uri);
+        let url = match Uri::from_str(&url) {
             Ok(url) => url,
             Err(e) => {
                 error!("Invalid health check url: {:?}",e);

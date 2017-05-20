@@ -14,7 +14,7 @@ use std::rc::Rc;
 use libc::pid_t;
 use nix::unistd::{fork, ForkResult};
 use tokio_core::reactor::Handle;
-use hyper::Url;
+use hyper::Uri;
 
 #[derive(Debug)]
 pub struct Worker {
@@ -63,7 +63,7 @@ impl Manager {
     }
 
     /// Ask all workers to add a new server to their pool
-    pub fn publish_new_server(&self, url: Url, handle: Handle) {
+    pub fn publish_new_server(&self, url: Uri, handle: Handle) {
         capnp::publish_new_server(url, handle, self.inner.borrow().subscribers.clone())
     }
 }
@@ -114,7 +114,7 @@ mod capnp {
     use tokio_io::AsyncRead;
     use tokio_core::reactor::Handle;
 
-    use hyper::Url;
+    use hyper::Uri;
 
     struct SubscriberHandle {
         client: subscriber::Client<::capnp::data::Owned>,
@@ -218,7 +218,7 @@ mod capnp {
         handle.spawn(done);
     }
 
-    pub fn publish_new_server(url: Url, handle: Handle, subscribers: Rc<RefCell<SubscriberMap>>) {
+    pub fn publish_new_server(url: Uri, handle: Handle, subscribers: Rc<RefCell<SubscriberMap>>) {
         trace!("publish_new_server");
 
         let mut message = Builder::new_default();

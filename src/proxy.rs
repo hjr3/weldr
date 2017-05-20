@@ -1,6 +1,6 @@
 use std::io;
 use std::net::SocketAddr;
-use std::str;
+use std::str::{self, FromStr};
 
 use net2::TcpBuilder;
 use net2::unix::UnixTcpBuilderExt;
@@ -13,7 +13,7 @@ use hyper::client::Service;
 use hyper::header;
 use hyper::server::{self, Http};
 use hyper_tls::HttpsConnector;
-use hyper::{Url, Uri};
+use hyper::Uri;
 
 use pool::Pool;
 
@@ -103,19 +103,6 @@ pub fn filter_frontend_request_headers(headers: &Headers) -> Headers {
     h
 }
 
-fn map_uri_to_url(uri: &Uri) -> Url {
-    debug!("uri = {:?}", uri);
-    Url::parse(
-        &format!(
-            "{}://{}{}?{}",
-            uri.scheme().unwrap_or("http"),
-            uri.authority().unwrap_or("example.com"),
-            uri.path(),
-            uri.query().unwrap_or(""),
-        )
-    ).expect("Failed to map uri to url")
-}
-
 /// Map a frontend request to a backend request
 ///
 /// The primary purpose of this function is to add and remove headers as required by an
@@ -123,14 +110,13 @@ fn map_uri_to_url(uri: &Uri) -> Url {
 fn map_request(req: server::Request) -> client::Request {
     let via = create_via_header(
         req.headers().get::<Via>(),
-        req.version());
+        &req.version());
 
     let mut headers = filter_frontend_request_headers(req.headers());
     headers.set(via);
 
-    let url = map_uri_to_url(req.uri());
-
-    let mut r = client::Request::new(req.method().clone(), url);
+    // TODO fix clone
+    let mut r = client::Request::new(req.method().clone(), req.uri().clone());
     r.headers_mut().extend(headers.iter());
     r.set_body(req.body());
     r
@@ -152,7 +138,7 @@ pub fn filter_backend_response_headers(headers: &Headers) -> Headers {
 /// The primary purpose of this function is to add and remove headers as required by an
 /// intermediary conforming to the HTTP spec.
 fn map_response(res: client::Response) -> server::Response {
-    let mut r = server::Response::new().with_status(*res.status());
+    let mut r = server::Response::new().with_status(res.status());
 
     let headers = filter_backend_response_headers(res.headers());
     r.headers_mut().extend(headers.iter());
@@ -178,19 +164,23 @@ impl Service for Proxy {
 
         self.pool.request(|server| {
 
-            // TODO need to add query strings in here as well
-            let url = server.url().join(client_req.url().path()).unwrap();
+            let url = format!("{}{}?{}",
+                              server.url(),
+                              client_req.uri().path(),
+                              client_req.uri().query().unwrap_or(""));
+            // TODO proper error handling
+            let uri = Uri::from_str(&url).expect("Failed to parse url");
             let map_host = server.map_host();
             debug!("Preparing backend request to {:?}", url);
 
             if map_host {
                 // add host header related to backend
                 let _ = client_req.headers_mut().remove::<header::Host>();
-                let host = url.host_str().unwrap().to_string();
-                let port = url.port_or_known_default();
+                let host = uri.host().unwrap().to_string();
+                let port = uri.port();
                 client_req.headers_mut().set(header::Host::new(host, port));
             }
-            client_req.set_url(url);
+            client_req.set_uri(uri);
 
             let backend = self.client.call(client_req).then(move |res| {
                 match res {

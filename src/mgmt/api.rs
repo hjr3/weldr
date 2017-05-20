@@ -4,7 +4,7 @@ use futures::{future, Future, Stream};
 
 use tokio_core::reactor::Handle;
 
-use hyper::{self, Delete, Get, Post, StatusCode, Url};
+use hyper::{self, Delete, Get, Post, StatusCode, Uri};
 use hyper::server::{Service, Request, Response};
 use hyper::header::{ContentLength, ContentType};
 use hyper::mime::{Mime, TopLevel, SubLevel, Attr, Value};
@@ -60,11 +60,9 @@ fn index() -> Response {
 fn all_servers_reponse(pool: &Pool) -> Response {
     let all_servers = pool.all();
     let servers: Vec<PoolServer> = all_servers.into_iter().map(|server| {
-        let url = server.url().as_str().to_string();
-        // TODO: find a better way to identify a server
-        let delete_href = format!("/servers/{}", url);
+        let delete_href = format!("/servers/{}", server.url());
         PoolServer {
-            url: url,
+            url: server.url().as_ref().to_string(),
             links: Some(vec![Link {
                 rel: "delete".to_string(),
                 href: delete_href,
@@ -107,12 +105,12 @@ fn add_server(request: Request, pool: Pool, manager: Manager, handle: Handle) ->
             Ok(server) => {
                 debug!("body = {:?}", server);
 
-                let backend = server.url.parse::<Url>().expect("Failed to parse server url");
+                let backend = server.url.parse::<Uri>().expect("Failed to parse server url");
                 let backend = Server::new(backend, true);
                 pool.add(backend);
                 debug!("Added new server to pool");
 
-                let backend = server.url.parse::<Url>().expect("Failed to parse server url");
+                let backend = server.url.parse::<Uri>().expect("Failed to parse server url");
                 manager.publish_new_server(backend, handle);
 
                 all_servers_reponse(&pool)
