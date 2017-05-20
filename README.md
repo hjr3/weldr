@@ -35,15 +35,16 @@ See [DOCKER.md](./DOCKER.md) for details.
 
 ### Running Tests
 
-`RUST_LOG=test_proxy,weldr cargo test` will execute the tests and provide log level output for both the proxy and the integration tests.
+   * `RUST_LOG=test_proxy,weldr cargo test` will execute the tests and provide log level output for both the proxy and the integration tests.
+   * `rustup run nightly cargo bench` will execute some basic benchmarking.
 
 ### Benchmarks
 
-See [benchmark/](./benchmark) for details.
+See [benchmark/](./benchmark) for details on setting up real world benchmarks.
 
 ## High Level Roadmap
 
-   * Initial [0.1.0](https://github.com/hjr3/weldr/releases/tag/0.1.0<Paste>) release.
+   * Initial [0.1.0](https://github.com/hjr3/weldr/releases/tag/0.1.0) release.
    * Currently working on a [0.2.0](https://github.com/hjr3/weldr/milestone/2) release.
 
 ## Proposed Management API Design

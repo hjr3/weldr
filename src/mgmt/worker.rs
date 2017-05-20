@@ -1,6 +1,7 @@
 use std::net::SocketAddr;
 use std::rc::Rc;
 use std::cell::RefCell;
+use std::str::FromStr;
 
 use weldr_capnp::{publisher, subscriber, add_backend_server_request};
 
@@ -11,7 +12,7 @@ use capnp::capability::{Response, Promise};
 use capnp::serialize;
 use capnp::message::ReaderOptions;
 
-use hyper::Url;
+use hyper::Uri;
 
 use tokio_io::AsyncRead;
 use tokio_core::reactor::Handle;
@@ -46,7 +47,7 @@ impl subscriber::Server<::capnp::data::Owned> for SubscriberImpl {
             let url = message.get_url().unwrap();
             info!("url from manager: {:?}", url);
 
-            let backend = url.parse::<Url>().expect("Failed to parse server url");
+            let backend = Uri::from_str(url).expect("Failed to parse server uri");
             let backend = Server::new(backend, true);
             self.pool.add(backend);
 

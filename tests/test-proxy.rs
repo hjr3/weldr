@@ -9,13 +9,14 @@ extern crate weldr;
 use std::net::SocketAddr;
 use std::sync::mpsc::channel;
 use std::thread;
+use std::str::FromStr;
 
 use futures::{future, Future, Stream};
 use tokio_core::net::{TcpListener, TcpStream};
 use tokio_core::reactor::{Core, Handle};
 use tokio_io::io;
 
-use hyper::{Get, Post, StatusCode, Method, HttpVersion, Headers, Url};
+use hyper::{Get, Post, StatusCode, Method, HttpVersion, Headers, Uri};
 use hyper::client;
 use hyper::server::{Http, Service, Request, Response};
 use hyper::header::{ContentLength, TransferEncoding};
@@ -120,7 +121,7 @@ fn with_server<R> (req: R) where R: Fn(String, Handle) -> Box<Future<Item=(), Er
 
     let origin = rx.recv().unwrap();
     let origin_str = format!("http://127.0.0.1:{}", origin.port());
-    let origin_url = origin_str.parse::<Url>().unwrap();
+    let origin_url = origin_str.parse::<Uri>().unwrap();
     let origin_server = Server::new(origin_url, false);
     pool.add(origin_server);
 
@@ -170,7 +171,7 @@ fn test_method_on_http_server() {
 
             let method = method.clone();
             let h_method = Method::from_str(&method).unwrap();
-            let url = hyper::Url::parse(&format!("{}{}", host, "/method")).unwrap();
+            let url = hyper::Uri::from_str(&format!("{}{}", host, "/method")).unwrap();
             let req = client::Request::new(h_method, url);
             let work = client_send_request(req, &handle).and_then(move |res| {
 
@@ -198,7 +199,7 @@ fn test_request_body() {
     with_server(|host, handle| {
 
         let url = format!("{}{}", host, "/echo");
-        let url = hyper::Url::parse(&url).unwrap();
+        let url = hyper::Uri::from_str(&url).unwrap();
         let mut req = client::Request::new(Method::Post, url);
         req.set_body("hello");
         let work = client_send_request(req, &handle).and_then(move |res| {
@@ -254,7 +255,7 @@ fn test_response_body_streaming() {
     with_server(|host, handle| {
 
         let url = format!("{}{}", host, "/chunked");
-        let url = hyper::Url::parse(&url).unwrap();
+        let url = hyper::Uri::from_str(&url).unwrap();
         let req = client::Request::new(Method::Get, url);
         let work = client_send_request(req, &handle).and_then(move |res| {
 
