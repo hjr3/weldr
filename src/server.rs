@@ -1,6 +1,6 @@
 use hyper::Uri;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct Server {
     url: Uri,
 

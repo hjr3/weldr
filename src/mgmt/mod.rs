@@ -2,17 +2,17 @@ use std::io;
 use std::net::SocketAddr;
 use std::time::Duration;
 
-use futures::{future, Future, Stream};
+use futures::Stream;
 use futures::stream::MergedItem;
 use tokio_core::reactor::{Core, Handle};
 use tokio_core::net::{TcpStream, TcpListener};
 use tokio_timer::Timer;
-use hyper;
 use hyper::server:: Http;
 
 use pool::Pool;
 use self::api::Mgmt;
 use self::manager::Manager;
+use self::health::BackendHealth;
 use config::Config;
 
 pub mod api;
@@ -20,27 +20,12 @@ pub mod health;
 pub mod manager;
 pub mod worker;
 
-/// Run server with default Core
-pub fn run(admin_addr: SocketAddr, pool: Pool, core: Core, manager: Manager, conf: &Config) -> io::Result<()> {
+/// Run manager server and start health check timer
+pub fn run(sock: SocketAddr, pool: Pool, mut core: Core, manager: Manager, conf: &Config, health: BackendHealth) -> io::Result<()> {
     let handle = core.handle();
-
-    let admin_listener = TcpListener::bind(&admin_addr, &handle)?;
-    run_with(core, admin_listener, pool, future::empty(), manager, conf)
-}
-
-/// Run server with specified Core, TcpListener, Pool
-///
-/// This is useful for integration testing where the port is set to 0 and the test code needs to
-/// determine the local addr.
-pub fn run_with<F>(mut core: Core, listener: TcpListener, pool: Pool, shutdown_signal: F, manager: Manager, conf: &Config) -> io::Result<()>
-    where F: Future<Item = (), Error = hyper::Error>,
-{
-    let handle = core.handle();
-
+    let listener = TcpListener::bind(&sock, &handle)?;
     let timer = Timer::default();
-
-    // FIXME configure health check timer
-    let health_timer = timer.interval(Duration::from_secs(conf.health.timeout)).map_err(|e| {
+    let health_timer = timer.interval(Duration::from_secs(conf.health_check.interval)).map_err(|e| {
         io::Error::new(io::ErrorKind::Other, e)
     });
 
@@ -55,12 +40,12 @@ pub fn run_with<F>(mut core: Core, listener: TcpListener, pool: Pool, shutdown_s
                 mgmt(socket, addr, pool.clone(), &handle, manager.clone());
             }
             MergedItem::Second(()) => {
-                health::run(pool.clone(), &handle, &conf);
+                health::run(pool.clone(), &handle, &conf, manager.clone(), health.clone());
             }
             MergedItem::Both((socket, addr), ()) => {
                 mgmt(socket, addr, pool.clone(), &handle, manager.clone());
                 info!("health check");
-                health::run(pool.clone(), &handle, &conf);
+                health::run(pool.clone(), &handle, &conf, manager.clone(), health.clone());
             }
         }
 
@@ -68,10 +53,7 @@ pub fn run_with<F>(mut core: Core, listener: TcpListener, pool: Pool, shutdown_s
     });
 
     info!("Listening on http://{}", &admin_addr);
-    match core.run(shutdown_signal.select(srv.map_err(|e| e.into()))) {
-        Ok(((), _incoming)) => Ok(()),
-        Err((e, _other)) => return Err(io::Error::new(io::ErrorKind::Other, e)),
-    }
+    core.run(srv)
 }
 
 fn mgmt(socket: TcpStream, addr: SocketAddr, pool: Pool, handle: &Handle, manager: Manager) {
