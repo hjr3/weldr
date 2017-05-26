@@ -3,14 +3,12 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use std::str::FromStr;
 
-use weldr_capnp::{publisher, subscriber, add_backend_server_request};
+use weldr_capnp::{publisher, subscriber};
 
 use futures::Future;
 
 use capnp_rpc::{RpcSystem, twoparty, rpc_twoparty_capnp};
 use capnp::capability::{Response, Promise};
-use capnp::serialize;
-use capnp::message::ReaderOptions;
 
 use hyper::Uri;
 
@@ -34,22 +32,69 @@ impl SubscriberImpl {
 }
 
 impl subscriber::Server<::capnp::data::Owned> for SubscriberImpl {
-    fn push_message(&mut self,
-                    params: subscriber::PushMessageParams<::capnp::data::Owned>,
-                    _results: subscriber::PushMessageResults<::capnp::data::Owned>)
+    fn add_server(&mut self,
+                    params: subscriber::AddServerParams<::capnp::data::Owned>,
+                    _results: subscriber::AddServerResults<::capnp::data::Owned>)
         -> Promise<(), ::capnp::Error>
         {
-            let mut buf = pry!(pry!(params.get()).get_message());
-            info!("raw message from publisher: {:?}", buf);
+            trace!("add_server");
 
-            let reader = serialize::read_message(&mut buf, ReaderOptions::new()).unwrap();
-            let message = reader.get_root::<add_backend_server_request::Reader>().unwrap();
-            let url = message.get_url().unwrap();
-            info!("url from manager: {:?}", url);
+            let url_str = pry!(pry!(params.get()).get_url());
+            info!("url from publisher: {:?}", url_str);
 
-            let backend = Uri::from_str(url).expect("Failed to parse server uri");
-            let backend = Server::new(backend, true);
-            self.pool.add(backend);
+            let url = Uri::from_str(url_str).expect("Failed to parse server uri");
+            let server = Server::new(url, true);
+            self.pool.add(server);
+
+            Promise::ok(())
+        }
+
+    fn mark_server_down(&mut self,
+                    params: subscriber::MarkServerDownParams<::capnp::data::Owned>,
+                    _results: subscriber::MarkServerDownResults<::capnp::data::Owned>)
+        -> Promise<(), ::capnp::Error>
+        {
+            trace!("mark_server_down");
+
+            let url_str = pry!(pry!(params.get()).get_url());
+            info!("url from publisher: {:?}", url_str);
+
+            let url = Uri::from_str(url_str).expect("Failed to parse server uri");
+
+            let server = Server::new(url, true);
+            match self.pool.find(&server) {
+                Some(backend) => {
+                    backend.mark_down();
+                }
+                None => {
+                    error!("Unable to find server {:?} to mark as down", server);
+                }
+            }
+
+            Promise::ok(())
+        }
+
+    fn mark_server_active(&mut self,
+                    params: subscriber::MarkServerActiveParams<::capnp::data::Owned>,
+                    _results: subscriber::MarkServerActiveResults<::capnp::data::Owned>)
+        -> Promise<(), ::capnp::Error>
+        {
+            trace!("mark_server_active");
+
+            let url_str = pry!(pry!(params.get()).get_url());
+            info!("url from publisher: {:?}", url_str);
+
+            let url = Uri::from_str(url_str).expect("Failed to parse server uri");
+
+            let server = Server::new(url, true);
+            match self.pool.find(&server) {
+                Some(backend) => {
+                    backend.mark_active();
+                }
+                None => {
+                    error!("Unable to find server {:?} to mark as active", server);
+                }
+            }
 
             Promise::ok(())
         }

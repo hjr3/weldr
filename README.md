@@ -45,7 +45,15 @@ See [benchmark/](./benchmark) for details on setting up real world benchmarks.
 ## High Level Roadmap
 
    * Initial [0.1.0](https://github.com/hjr3/weldr/releases/tag/0.1.0) release.
-   * Currently working on a [0.2.0](https://github.com/hjr3/weldr/milestone/2) release.
+   * Currently working on a [0.2.0](https://github.com/hjr3/weldr/milestone/2) release. [Want to help?](https://github.com/hjr3/weldr/issues?utf8=%E2%9C%93&q=is%3Aopen%20is%3Aissue%20label%3A%22help%20wanted%22%20)
+
+## Design
+
+Weldr does not use any threads. The process that is started is the manager process. That process will spawn worker processes to handle the requests. The manager process will listen for API requests and perform periodic health checks on the backend servers in the pool. Changes to the pool, caused by API requests or health checks, are sent to all the workers.
+
+### Health Checks
+
+Weldr uses _active_ health checks. As long as the health check passes, the pool will keep the server active and send it requests. A health checks is run, by default, every 30 seconds using [tokio-timer](https://crates.io/crates/tokio-timer). The health check makes a request to, by default, `/` and expects a `2xx` HTTP response code. Each server is assumed active when added to the pool. If a server fails the check, by default, 3 consecutive times, the manager will mark that server as down and then send a message to the workers to mark that same server as down. If a server marked as down later returns a `2xx` HTTP response code, by default, 2 consecutive times, it will be marked as active again.
 
 ## Proposed Management API Design
 

@@ -58,7 +58,8 @@ fn index() -> Response {
 }
 
 fn all_servers_reponse(pool: &Pool) -> Response {
-    let all_servers = pool.all();
+    let backends = pool.all();
+    let all_servers: Vec<Server> = backends.iter().map(|backend| backend.server()).collect();
     let servers: Vec<PoolServer> = all_servers.into_iter().map(|server| {
         let delete_href = format!("/servers/{}", server.url());
         PoolServer {

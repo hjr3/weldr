@@ -1,4 +1,4 @@
-//! Managers the underlying worker pool
+//! Manages the underlying worker pool
 //!
 //! The manager publishes messages to the workers. Currently, the pubsub system uses capnp RPC
 //! functionality. The pubsub implementation is subject to change, so the implementation is
@@ -66,6 +66,16 @@ impl Manager {
     pub fn publish_new_server(&self, url: Uri, handle: Handle) {
         capnp::publish_new_server(url, handle, self.inner.borrow().subscribers.clone())
     }
+
+    /// Ask all workers to mark a server down in their pool
+    pub fn publish_server_state_down(&self, url: &Uri, handle: Handle) {
+        capnp::publish_server_state_down(url, handle, self.inner.borrow().subscribers.clone())
+    }
+
+    /// Ask all workers to mark a server active in their pool
+    pub fn publish_server_state_active(&self, url: &Uri, handle: Handle) {
+        capnp::publish_server_state_active(url, handle, self.inner.borrow().subscribers.clone())
+    }
 }
 
 fn start_worker(id: u64) -> io::Result<Worker> {
@@ -101,15 +111,13 @@ mod capnp {
     use std::rc::Rc;
     use std::fmt;
 
-    use weldr_capnp::{publisher, subscriber, subscription, add_backend_server_request};
+    use weldr_capnp::{publisher, subscriber, subscription};
 
     use futures::{Future, Stream};
 
     use capnp_rpc::{RpcSystem, twoparty, rpc_twoparty_capnp};
     use capnp::capability::Promise;
     use capnp::Error;
-    use capnp::message::Builder;
-    use capnp::serialize;
 
     use tokio_io::AsyncRead;
     use tokio_core::reactor::Handle;
@@ -221,14 +229,37 @@ mod capnp {
     pub fn publish_new_server(url: Uri, handle: Handle, subscribers: Rc<RefCell<SubscriberMap>>) {
         trace!("publish_new_server");
 
-        let mut message = Builder::new_default();
-        {
-            let mut request = message.init_root::<add_backend_server_request::Builder>();
-            request.set_url(&format!("{}", url));
-        }
+        let subscribers1 = subscribers.clone();
+        let subs = &mut subscribers.borrow_mut().subscribers;
+        for (&idx, mut subscriber) in subs.iter_mut() {
+            if subscriber.requests_in_flight < 5 {
+                subscriber.requests_in_flight += 1;
 
-        let mut buf = Vec::new();
-        serialize::write_message(&mut buf, &message).unwrap();
+                let mut request = subscriber.client.add_server_request();
+
+                request.get().set_url(&format!("{}", &url));
+
+                let subscribers2 = subscribers1.clone();
+                handle.spawn(request.send().promise.then(move |r| {
+                    match r {
+                        Ok(_) => {
+                            subscribers2.borrow_mut().subscribers.get_mut(&idx).map(|ref mut s| {
+                                s.requests_in_flight -= 1;
+                            });
+                        }
+                        Err(e) => {
+                            error!("Got error: {:?}. Dropping subscriber.", e);
+                            subscribers2.borrow_mut().subscribers.remove(&idx);
+                        }
+                    }
+                    Ok::<(), Error>(())
+                }).map_err(|_| unreachable!()));
+            }
+        }
+    }
+
+    pub fn publish_server_state_down(url: &Uri, handle: Handle, subscribers: Rc<RefCell<SubscriberMap>>) {
+        trace!("publish_server_state_down");
 
         let subscribers1 = subscribers.clone();
         let subs = &mut subscribers.borrow_mut().subscribers;
@@ -236,9 +267,41 @@ mod capnp {
             if subscriber.requests_in_flight < 5 {
                 subscriber.requests_in_flight += 1;
 
-                let mut request = subscriber.client.push_message_request();
+                let mut request = subscriber.client.mark_server_down_request();
 
-                request.get().set_message(&buf[..]).unwrap();
+                request.get().set_url(&format!("{}", &url));
+
+                let subscribers2 = subscribers1.clone();
+                handle.spawn(request.send().promise.then(move |r| {
+                    match r {
+                        Ok(_) => {
+                            subscribers2.borrow_mut().subscribers.get_mut(&idx).map(|ref mut s| {
+                                s.requests_in_flight -= 1;
+                            });
+                        }
+                        Err(e) => {
+                            error!("Got error: {:?}. Dropping subscriber.", e);
+                            subscribers2.borrow_mut().subscribers.remove(&idx);
+                        }
+                    }
+                    Ok::<(), Error>(())
+                }).map_err(|_| unreachable!()));
+            }
+        }
+    }
+
+    pub fn publish_server_state_active(url: &Uri, handle: Handle, subscribers: Rc<RefCell<SubscriberMap>>) {
+        trace!("publish_server_state_active");
+
+        let subscribers1 = subscribers.clone();
+        let subs = &mut subscribers.borrow_mut().subscribers;
+        for (&idx, mut subscriber) in subs.iter_mut() {
+            if subscriber.requests_in_flight < 5 {
+                subscriber.requests_in_flight += 1;
+
+                let mut request = subscriber.client.mark_server_active_request();
+
+                request.get().set_url(&format!("{}", &url));
 
                 let subscribers2 = subscribers1.clone();
                 handle.spawn(request.send().promise.then(move |r| {

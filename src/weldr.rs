@@ -14,6 +14,7 @@ use tokio_core::reactor::Core;
 use weldr::pool::Pool;
 use weldr::config::Config;
 use weldr::mgmt::{worker, manager};
+use weldr::mgmt::health::BackendHealth;
 
 fn main() {
     env_logger::init().expect("Failed to start logger");
@@ -58,13 +59,15 @@ fn main() {
 
         weldr::proxy::run(ip, pool, core).expect("Failed to start server");
     } else {
-        let conf = Config::new(5, "/".to_string()); // set timeout in secs and health check uri path
+        let conf = Config::default();
         let mut manager = manager::Manager::new();
         manager.listen(internal_addr, handle.clone());
         manager.start_workers(5).expect("Failed to start manager");
 
+        let health = BackendHealth::new();
+
         let admin_ip = matches.value_of("worker").unwrap_or("127.0.0.1:8687");
         let admin_ip = admin_ip.parse::<SocketAddr>().unwrap();
-        weldr::mgmt::run(admin_ip, pool, core, manager.clone(), &conf).expect("Failed to start server");
+        weldr::mgmt::run(admin_ip, pool, core, manager.clone(), &conf, health.clone()).expect("Failed to start server");
     }
 }

@@ -11,14 +11,12 @@ interface Publisher(T) {
 }
 
 interface Subscriber(T) {
-    pushMessage @0 (message: T) -> ();
-    # Sends a message from a publisher to the subscriber. To help with flow control, the subscriber should not
-    # return from this method until it is ready to process the next message.
-}
+    addServer @0 (url: Text) -> ();
+    # A request from the manager to the workers to add a new backend server to the pool
 
-struct AddBackendServerRequest {
-  # A request from the manager to the workers to add a new backend server to the pool
+    markServerDown @1 (url: Text) -> ();
+    # A request from the manager to the workers mark a server as down
 
-   url @0 :Text;
-   # The url of the new server to add to the pool
+    markServerActive @2 (url: Text) -> ();
+    # A request from the manager to the workers mark a server as down
 }
