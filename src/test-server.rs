@@ -64,7 +64,7 @@ fn main() {
 
     let port = env::args().nth(1).unwrap_or("12345".to_string());
 
-    let addr = format!("127.0.0.1:{}", port).parse::<SocketAddr>().expect("Failed to parse socket addr");
+    let addr = format!("0.0.0.0:{}", port).parse::<SocketAddr>().expect("Failed to parse socket addr");
     let server = Http::new().bind(&addr, || Ok(TestServer)).unwrap();
     server.run().unwrap();
 }
