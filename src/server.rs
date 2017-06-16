@@ -23,5 +23,4 @@ impl Server {
     pub fn map_host(&self) -> bool {
         self.map_host
     }
-
 }

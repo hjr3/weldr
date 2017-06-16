@@ -1,5 +1,6 @@
 extern crate env_logger;
-#[macro_use] extern crate log;
+#[macro_use]
+extern crate log;
 extern crate futures;
 extern crate tokio_core;
 extern crate tokio_io;
@@ -40,29 +41,26 @@ impl Service for Origin {
                 Response::new()
                     .with_header(ContentLength(body.len() as u64))
                     .with_body(body)
-            },
+            }
             (_, "/method") => {
                 let body = format!("hello {}", req.method());
                 Response::new()
                     .with_header(ContentLength(body.len() as u64))
                     .with_body(body)
-            },
+            }
             (&Post, "/echo") => {
                 let mut res = Response::new();
                 if let Some(len) = req.headers().get::<ContentLength>() {
                     res.headers_mut().set(len.clone());
                 }
                 res.with_body(req.body())
-            },
+            }
             (_, "/chunked") => {
                 Response::new()
                     .with_header(TransferEncoding::chunked())
                     .with_body("Hello Chunky World!")
-            },
-            _ => {
-                Response::new()
-                    .with_status(StatusCode::NotFound)
             }
+            _ => Response::new().with_status(StatusCode::NotFound),
         })
     }
 }
@@ -87,14 +85,15 @@ impl SimpleResponse {
     pub fn set_body(&mut self, body: String) {
         self.body = Some(body);
     }
-
 }
 
 /// Send a request through the proxy and get back a response.
 ///
 /// The client request is to created via the callback. The callback provides the host so the client
 /// can connect to the correct proxy.
-fn with_server<R> (req: R) where R: Fn(String, Handle) -> Box<Future<Item=(), Error=hyper::Error>>
+fn with_server<R>(req: R)
+where
+    R: Fn(String, Handle) -> Box<Future<Item = (), Error = hyper::Error>>,
 {
     let _ = env_logger::init();
 
@@ -127,19 +126,20 @@ fn with_server<R> (req: R) where R: Fn(String, Handle) -> Box<Future<Item=(), Er
 
     let shutdown_signal = future::lazy(|| {
         req(origin_str, handle.clone());
-        req(format!("http://{}:{}", proxy_addr.ip(), proxy_addr.port()), handle.clone())
+        req(
+            format!("http://{}:{}", proxy_addr.ip(), proxy_addr.port()),
+            handle.clone(),
+        )
     });
 
-    weldr::proxy::run_with(
-        core,
-        listener,
-        pool.clone(),
-        shutdown_signal).expect("Failed to start server");
+    weldr::proxy::run_with(core, listener, pool.clone(), shutdown_signal)
+        .expect("Failed to start server");
 }
 
-fn client_send_request(request: client::Request, handle: &Handle)
-        -> Box<Future<Item = SimpleResponse, Error = hyper::Error>>
-{
+fn client_send_request(
+    request: client::Request,
+    handle: &Handle,
+) -> Box<Future<Item = SimpleResponse, Error = hyper::Error>> {
     let client = client::Client::new(&handle);
     let res = client.request(request).and_then(move |res| {
         debug!("Response: {}", res.status());
@@ -147,14 +147,16 @@ fn client_send_request(request: client::Request, handle: &Handle)
 
         let mut s_res = SimpleResponse::from_hyper_response(&res);
 
-        res.body().fold(Vec::new(), |mut v, chunk| {
-            v.extend(&chunk[..]);
-            future::ok::<_, hyper::Error>(v)
-        }).and_then(move |chunks| {
-            let body = String::from_utf8(chunks).unwrap();
-            s_res.set_body(body);
-            future::ok(s_res)
-        })
+        res.body()
+            .fold(Vec::new(), |mut v, chunk| {
+                v.extend(&chunk[..]);
+                future::ok::<_, hyper::Error>(v)
+            })
+            .and_then(move |chunks| {
+                let body = String::from_utf8(chunks).unwrap();
+                s_res.set_body(body);
+                future::ok(s_res)
+            })
     });
 
     Box::new(res)
@@ -165,7 +167,17 @@ fn test_method_on_http_server() {
     let _ = env_logger::init();
     use std::str::FromStr;
 
-    let methods = vec!("GET", "DELETE", "PATCH", "OPTIONS", "POST", "PUT", "TRACE", "HEAD", "CONNECT");
+    let methods = vec![
+        "GET",
+        "DELETE",
+        "PATCH",
+        "OPTIONS",
+        "POST",
+        "PUT",
+        "TRACE",
+        "HEAD",
+        "CONNECT",
+    ];
     for method in methods.iter() {
         with_server(|host, handle| {
 
@@ -180,8 +192,8 @@ fn test_method_on_http_server() {
                 // TODO: fix body being returned here
                 // HEAD, CONNECT cannot return any body
                 //if method != "HEAD" && method != "CONNECT" {
-                    let expected = format!("hello {}", method);
-                    assert_eq!(expected, res.body.unwrap());
+                let expected = format!("hello {}", method);
+                assert_eq!(expected, res.body.unwrap());
                 //} else {
                 //    assert_eq!("", &s);
                 //}
@@ -224,7 +236,9 @@ fn test_request_and_response_body_chunked() {
         let tcp = TcpStream::connect(&addr, &handle);
         let req = tcp.and_then(|stream| {
 
-            io::write_all(stream, &b"\
+            io::write_all(
+                stream,
+                &b"\
             POST /echo HTTP/1.1\r\n\
             Host: www.example.com\r\n\
             Accept: */*\r\n\
@@ -234,15 +248,16 @@ fn test_request_and_response_body_chunked() {
             5\r\n\
             hello\r\n\
             0\r\n\r\n\
-            "[..]).and_then(|(stream, _)| {
-                io::read_to_end(stream, Vec::new())
-            }).and_then(|(_, body)| {
-                let body = String::from_utf8(body).unwrap();
-                let n = body.find("\r\n\r\n").unwrap() + 4;
-                assert_eq!(&body[n..], "5\r\nhello\r\n0\r\n\r\n");
+            "
+                    [..],
+            ).and_then(|(stream, _)| io::read_to_end(stream, Vec::new()))
+                .and_then(|(_, body)| {
+                    let body = String::from_utf8(body).unwrap();
+                    let n = body.find("\r\n\r\n").unwrap() + 4;
+                    assert_eq!(&body[n..], "5\r\nhello\r\n0\r\n\r\n");
 
-                future::ok(())
-            })
+                    future::ok(())
+                })
         }).map_err(From::from);
 
         Box::new(req)
@@ -264,7 +279,9 @@ fn test_response_body_streaming() {
 
             assert_eq!(
                 res.headers.get::<hyper::header::TransferEncoding>(),
-                Some(&hyper::header::TransferEncoding(vec![hyper::header::Encoding::Chunked]))
+                Some(&hyper::header::TransferEncoding(
+                    vec![hyper::header::Encoding::Chunked],
+                ))
             );
 
             future::ok(())

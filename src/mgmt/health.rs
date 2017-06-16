@@ -15,7 +15,7 @@ use mgmt::Manager;
 #[derive(Debug, Clone, Copy)]
 enum HealthState {
     Passing(u64),
-    Failing(u64)
+    Failing(u64),
 }
 
 #[derive(Clone, Debug)]
@@ -30,16 +30,14 @@ struct Inner {
 
 impl BackendHealth {
     pub fn new() -> BackendHealth {
-        BackendHealth {
-            inner: Rc::new(RefCell::new(Inner {
-                health_state: HashMap::new(),
-            }))
-        }
+        BackendHealth { inner: Rc::new(RefCell::new(Inner { health_state: HashMap::new() })) }
     }
 
     pub fn should_mark_active(&self, backend: Backend, required_passes: u64) -> bool {
         let ref mut health_state = self.inner.borrow_mut().health_state;
-        let state = health_state.entry(backend.clone()).or_insert(HealthState::Passing(0));
+        let state = health_state
+            .entry(backend.clone())
+            .or_insert(HealthState::Passing(0));
 
         // rules
         // - if active and passing, then do nothing
@@ -73,7 +71,9 @@ impl BackendHealth {
 
     pub fn should_mark_down(&self, backend: Backend, required_failures: u64) -> bool {
         let ref mut health_state = self.inner.borrow_mut().health_state;
-        let state = health_state.entry(backend.clone()).or_insert(HealthState::Passing(0));
+        let state = health_state
+            .entry(backend.clone())
+            .or_insert(HealthState::Passing(0));
 
         // rules
         // - if down and failing, then do nothing
@@ -122,7 +122,7 @@ pub fn run(pool: Pool, handle: &Handle, conf: &Config, manager: Manager, health:
         let url = match Uri::from_str(&url) {
             Ok(url) => url,
             Err(e) => {
-                error!("Invalid health check url: {:?}",e);
+                error!("Invalid health check url: {:?}", e);
                 if backend.is_active() {
                     info!("Disabling {:?} in pool", backend);
                     backend.mark_down();
@@ -136,39 +136,37 @@ pub fn run(pool: Pool, handle: &Handle, conf: &Config, manager: Manager, health:
         let allowed_failures = conf.health_check.failures;
         let allowed_successes = conf.health_check.passes;
         debug!("Health check {:?}", url);
-        let req = client.get(url).then(move |res| {
-            match res {
-                Ok(res) => {
-                    debug!("Response: {}", res.status());
-                    debug!("Headers: \n{}", res.headers());
+        let req = client.get(url).then(move |res| match res {
+            Ok(res) => {
+                debug!("Response: {}", res.status());
+                debug!("Headers: \n{}", res.headers());
 
-                    if res.status().is_success() {
-                        if health.should_mark_active(backend.clone(), allowed_successes) {
-                            info!("Enabling {:?} in pool", backend);
-                            backend.mark_active();
-                            let uri = backend.server().url();
-                            manager.publish_server_state_active(&uri, handle1.clone());
-                        }
-                    } else {
-                        if health.should_mark_down(backend.clone(), allowed_failures) {
-                            info!("Disabling {:?} in pool", backend);
-                            backend.mark_down();
-                            let uri = backend.server().url();
-                            manager.publish_server_state_down(&uri, handle1.clone());
-                        }
+                if res.status().is_success() {
+                    if health.should_mark_active(backend.clone(), allowed_successes) {
+                        info!("Enabling {:?} in pool", backend);
+                        backend.mark_active();
+                        let uri = backend.server().url();
+                        manager.publish_server_state_active(&uri, handle1.clone());
                     }
-                    ::futures::finished(())
-                }
-                Err(e) => {
-                    error!("Error connecting to backend: {:?}", e);
+                } else {
                     if health.should_mark_down(backend.clone(), allowed_failures) {
                         info!("Disabling {:?} in pool", backend);
                         backend.mark_down();
                         let uri = backend.server().url();
                         manager.publish_server_state_down(&uri, handle1.clone());
                     }
-                    ::futures::finished(())
                 }
+                ::futures::finished(())
+            }
+            Err(e) => {
+                error!("Error connecting to backend: {:?}", e);
+                if health.should_mark_down(backend.clone(), allowed_failures) {
+                    info!("Disabling {:?} in pool", backend);
+                    backend.mark_down();
+                    let uri = backend.server().url();
+                    manager.publish_server_state_down(&uri, handle1.clone());
+                }
+                ::futures::finished(())
             }
         });
 
@@ -184,14 +182,13 @@ mod tests {
     use std::str::FromStr;
 
     fn backend() -> Backend {
-        Backend::new(
-            Server::new(
-                FromStr::from_str(
-                    "http://127.0.0.1:6000
-                ").unwrap(),
-                false
-            )
-        )
+        Backend::new(Server::new(
+            FromStr::from_str(
+                "http://127.0.0.1:6000
+                ",
+            ).unwrap(),
+            false,
+        ))
     }
 
     #[test]

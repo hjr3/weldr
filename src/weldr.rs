@@ -1,4 +1,5 @@
-#[macro_use] extern crate log;
+#[macro_use]
+extern crate log;
 extern crate env_logger;
 extern crate hyper;
 extern crate weldr;
@@ -24,12 +25,12 @@ fn main() {
               .long("admin-ip")
               .value_name("admin-ip")
               .takes_value(true)
-              .help("administrative ip and port used to issue commands to cluster. defaults to 0.0.0.0:8687"))
+              .help("admin ip and port used to issue commands to cluster. default: 0.0.0.0:8687"))
          .arg(Arg::with_name("ip")
               .long("ip")
               .value_name("ip")
               .takes_value(true)
-              .help("listening ip and port for cluster. defaults to 0.0.0.0:8080"))
+              .help("listening ip and port for cluster. default: 0.0.0.0:8080"))
          .subcommand(SubCommand::with_name("worker")
             .about("start a worker")
             .arg(Arg::with_name("id")
@@ -45,7 +46,9 @@ fn main() {
 
     // TODO make this dynamic and pass it down to workers
     let internal_addr = "127.0.0.1:4000";
-    let internal_addr = internal_addr.parse::<SocketAddr>().expect("Failed to parse addr");
+    let internal_addr = internal_addr
+        .parse::<SocketAddr>()
+        .expect("Failed to parse addr");
 
     let ip = matches.value_of("worker").unwrap_or("0.0.0.0:8080");
     let ip = ip.parse::<SocketAddr>().unwrap();
@@ -68,6 +71,7 @@ fn main() {
 
         let admin_ip = matches.value_of("worker").unwrap_or("0.0.0.0:8687");
         let admin_ip = admin_ip.parse::<SocketAddr>().unwrap();
-        weldr::mgmt::run(admin_ip, pool, core, manager.clone(), &conf, health.clone()).expect("Failed to start server");
+        weldr::mgmt::run(admin_ip, pool, core, manager.clone(), &conf, health.clone())
+            .expect("Failed to start server");
     }
 }

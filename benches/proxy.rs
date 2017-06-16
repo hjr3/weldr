@@ -1,7 +1,8 @@
 #![feature(test)]
 
 extern crate env_logger;
-#[macro_use] extern crate log;
+#[macro_use]
+extern crate log;
 extern crate futures;
 extern crate tokio_core;
 extern crate hyper;
@@ -38,7 +39,7 @@ impl Service for Origin {
                     res.headers_mut().set(len.clone());
                 }
                 res.with_body(req.body())
-            },
+            }
             _ => {
                 panic!("benchmark should not be getting a 404");
             }
@@ -50,7 +51,9 @@ impl Service for Origin {
 ///
 /// The client request is to created via the callback. The callback provides the host so the client
 /// can connect to the correct proxy.
-fn with_server<R> (mut req: R) where R: FnMut(String)
+fn with_server<R>(mut req: R)
+where
+    R: FnMut(String),
 {
     let _ = env_logger::init();
 
@@ -63,8 +66,7 @@ fn with_server<R> (mut req: R) where R: FnMut(String)
     thread::spawn(move || {
         let addr = "127.0.0.1:0".parse::<SocketAddr>().unwrap();
         let (listening, server) = Server::standalone(|tokio| {
-            Server::http(&addr, tokio)?
-                .handle(|| Ok(Origin), tokio)
+            Server::http(&addr, tokio)?.handle(|| Ok(Origin), tokio)
         }).unwrap();
         tx.send(listening).unwrap();
         server.run();
@@ -90,9 +92,7 @@ fn bench_server_hello_world(b: &mut Bencher) {
         let client = reqwest::Client::new().expect("client failed to construct");
 
         b.iter(|| {
-            let res = client.post(&url)
-                .body("hello")
-                .send().unwrap();
+            let res = client.post(&url).body("hello").send().unwrap();
 
             res
         })

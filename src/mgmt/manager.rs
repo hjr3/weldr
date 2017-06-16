@@ -30,7 +30,7 @@ pub struct Manager {
 #[derive(Debug)]
 pub struct Inner {
     workers: Vec<Worker>,
-    subscribers: Rc<RefCell<capnp::SubscriberMap>>
+    subscribers: Rc<RefCell<capnp::SubscriberMap>>,
 }
 
 impl Manager {
@@ -39,17 +39,18 @@ impl Manager {
             inner: Rc::new(RefCell::new(Inner {
                 workers: Vec::new(),
                 subscribers: Rc::new(RefCell::new(capnp::SubscriberMap::new())),
-            }))
+            })),
         }
     }
 
     pub fn start_workers(&mut self, count: usize) -> io::Result<()> {
-        (0..count as u64).map(|id| {
-            start_worker(id)
-        }).collect::<io::Result<Vec<Worker>>>().and_then(|workers| {
-            self.inner.borrow_mut().workers.extend(workers);
-            Ok(())
-        })
+        (0..count as u64)
+            .map(|id| start_worker(id))
+            .collect::<io::Result<Vec<Worker>>>()
+            .and_then(|workers| {
+                self.inner.borrow_mut().workers.extend(workers);
+                Ok(())
+            })
     }
 
     /// Listen for workers requesting to subscribe
@@ -85,10 +86,7 @@ fn start_worker(id: u64) -> io::Result<Worker> {
         ForkResult::Parent { child, .. } => {
             info!("Spawned worker id {} as child pid {}", id, child);
 
-            return Ok(Worker {
-                id: id,
-                pid: child
-            })
+            return Ok(Worker { id: id, pid: child });
         }
         ForkResult::Child => {
             trace!("I am a new child");
@@ -135,7 +133,11 @@ mod capnp {
 
     impl fmt::Debug for SubscriberMap {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-            write!(f, "SubscriberMap {{ subscribers: {} }}", self.subscribers.iter().count())
+            write!(
+                f,
+                "SubscriberMap {{ subscribers: {} }}",
+                self.subscribers.iter().count()
+            )
         }
     }
 
@@ -152,7 +154,10 @@ mod capnp {
 
     impl SubscriptionImpl {
         fn new(id: u64, subscribers: Rc<RefCell<SubscriberMap>>) -> SubscriptionImpl {
-            SubscriptionImpl { id: id, subscribers: subscribers }
+            SubscriptionImpl {
+                id: id,
+                subscribers: subscribers,
+            }
         }
     }
 
@@ -172,32 +177,38 @@ mod capnp {
 
     impl PublisherImpl {
         pub fn new(subscribers: Rc<RefCell<SubscriberMap>>) -> PublisherImpl {
-            PublisherImpl { next_id: 0, subscribers: subscribers }
+            PublisherImpl {
+                next_id: 0,
+                subscribers: subscribers,
+            }
         }
     }
 
     impl publisher::Server<::capnp::data::Owned> for PublisherImpl {
-        fn subscribe(&mut self,
-                     params: publisher::SubscribeParams<::capnp::data::Owned>,
-                     mut results: publisher::SubscribeResults<::capnp::data::Owned>,)
-            -> Promise<(), ::capnp::Error>
-            {
-                info!("subscribe");
-                self.subscribers.borrow_mut().subscribers.insert(
+        fn subscribe(
+            &mut self,
+            params: publisher::SubscribeParams<::capnp::data::Owned>,
+            mut results: publisher::SubscribeResults<::capnp::data::Owned>,
+        ) -> Promise<(), ::capnp::Error> {
+            info!("subscribe");
+            self.subscribers.borrow_mut().subscribers.insert(
+                self.next_id,
+                SubscriberHandle {
+                    client: pry!(pry!(params.get()).get_subscriber()),
+                    requests_in_flight: 0,
+                },
+            );
+
+            results.get().set_subscription(
+                subscription::ToClient::new(SubscriptionImpl::new(
                     self.next_id,
-                    SubscriberHandle {
-                        client: pry!(pry!(params.get()).get_subscriber()),
-                        requests_in_flight: 0,
-                    }
-                );
+                    self.subscribers.clone(),
+                )).from_server::<::capnp_rpc::Server>(),
+            );
 
-                results.get().set_subscription(
-                    subscription::ToClient::new(SubscriptionImpl::new(self.next_id, self.subscribers.clone()))
-                    .from_server::<::capnp_rpc::Server>());
-
-                self.next_id += 1;
-                Promise::ok(())
-            }
+            self.next_id += 1;
+            Promise::ok(())
+        }
     }
 
     pub fn listen(addr: SocketAddr, handle: Handle, subscribers: Rc<RefCell<SubscriberMap>>) {
@@ -205,23 +216,30 @@ mod capnp {
 
         let publisher_impl = PublisherImpl::new(subscribers);
 
-        let publisher = publisher::ToClient::new(publisher_impl).from_server::<::capnp_rpc::Server>();
+        let publisher = publisher::ToClient::new(publisher_impl)
+            .from_server::<::capnp_rpc::Server>();
 
         let handle1 = handle.clone();
-        let done = socket.incoming().for_each(move |(socket, _addr)| {
-            try!(socket.set_nodelay(true));
-            let (reader, writer) = socket.split();
-            let handle = handle1.clone();
+        let done = socket
+            .incoming()
+            .for_each(move |(socket, _addr)| {
+                try!(socket.set_nodelay(true));
+                let (reader, writer) = socket.split();
+                let handle = handle1.clone();
 
-            let network =
-                twoparty::VatNetwork::new(reader, writer,
-                                          rpc_twoparty_capnp::Side::Server, Default::default());
+                let network = twoparty::VatNetwork::new(
+                    reader,
+                    writer,
+                    rpc_twoparty_capnp::Side::Server,
+                    Default::default(),
+                );
 
-            let rpc_system = RpcSystem::new(Box::new(network), Some(publisher.clone().client));
+                let rpc_system = RpcSystem::new(Box::new(network), Some(publisher.clone().client));
 
-            handle.spawn(rpc_system.map_err(|_| ()));
-            Ok(())
-        }).map_err(|_| ());
+                handle.spawn(rpc_system.map_err(|_| ()));
+                Ok(())
+            })
+            .map_err(|_| ());
 
         handle.spawn(done);
     }
@@ -240,25 +258,37 @@ mod capnp {
                 request.get().set_url(&format!("{}", &url));
 
                 let subscribers2 = subscribers1.clone();
-                handle.spawn(request.send().promise.then(move |r| {
-                    match r {
-                        Ok(_) => {
-                            subscribers2.borrow_mut().subscribers.get_mut(&idx).map(|ref mut s| {
-                                s.requests_in_flight -= 1;
-                            });
-                        }
-                        Err(e) => {
-                            error!("Got error: {:?}. Dropping subscriber.", e);
-                            subscribers2.borrow_mut().subscribers.remove(&idx);
-                        }
-                    }
-                    Ok::<(), Error>(())
-                }).map_err(|_| unreachable!()));
+                handle.spawn(
+                    request
+                        .send()
+                        .promise
+                        .then(move |r| {
+                            match r {
+                                Ok(_) => {
+                                    subscribers2
+                                        .borrow_mut()
+                                        .subscribers
+                                        .get_mut(&idx)
+                                        .map(|ref mut s| { s.requests_in_flight -= 1; });
+                                }
+                                Err(e) => {
+                                    error!("Got error: {:?}. Dropping subscriber.", e);
+                                    subscribers2.borrow_mut().subscribers.remove(&idx);
+                                }
+                            }
+                            Ok::<(), Error>(())
+                        })
+                        .map_err(|_| unreachable!()),
+                );
             }
         }
     }
 
-    pub fn publish_server_state_down(url: &Uri, handle: Handle, subscribers: Rc<RefCell<SubscriberMap>>) {
+    pub fn publish_server_state_down(
+        url: &Uri,
+        handle: Handle,
+        subscribers: Rc<RefCell<SubscriberMap>>,
+    ) {
         trace!("publish_server_state_down");
 
         let subscribers1 = subscribers.clone();
@@ -272,25 +302,37 @@ mod capnp {
                 request.get().set_url(&format!("{}", &url));
 
                 let subscribers2 = subscribers1.clone();
-                handle.spawn(request.send().promise.then(move |r| {
-                    match r {
-                        Ok(_) => {
-                            subscribers2.borrow_mut().subscribers.get_mut(&idx).map(|ref mut s| {
-                                s.requests_in_flight -= 1;
-                            });
-                        }
-                        Err(e) => {
-                            error!("Got error: {:?}. Dropping subscriber.", e);
-                            subscribers2.borrow_mut().subscribers.remove(&idx);
-                        }
-                    }
-                    Ok::<(), Error>(())
-                }).map_err(|_| unreachable!()));
+                handle.spawn(
+                    request
+                        .send()
+                        .promise
+                        .then(move |r| {
+                            match r {
+                                Ok(_) => {
+                                    subscribers2
+                                        .borrow_mut()
+                                        .subscribers
+                                        .get_mut(&idx)
+                                        .map(|ref mut s| { s.requests_in_flight -= 1; });
+                                }
+                                Err(e) => {
+                                    error!("Got error: {:?}. Dropping subscriber.", e);
+                                    subscribers2.borrow_mut().subscribers.remove(&idx);
+                                }
+                            }
+                            Ok::<(), Error>(())
+                        })
+                        .map_err(|_| unreachable!()),
+                );
             }
         }
     }
 
-    pub fn publish_server_state_active(url: &Uri, handle: Handle, subscribers: Rc<RefCell<SubscriberMap>>) {
+    pub fn publish_server_state_active(
+        url: &Uri,
+        handle: Handle,
+        subscribers: Rc<RefCell<SubscriberMap>>,
+    ) {
         trace!("publish_server_state_active");
 
         let subscribers1 = subscribers.clone();
@@ -304,20 +346,28 @@ mod capnp {
                 request.get().set_url(&format!("{}", &url));
 
                 let subscribers2 = subscribers1.clone();
-                handle.spawn(request.send().promise.then(move |r| {
-                    match r {
-                        Ok(_) => {
-                            subscribers2.borrow_mut().subscribers.get_mut(&idx).map(|ref mut s| {
-                                s.requests_in_flight -= 1;
-                            });
-                        }
-                        Err(e) => {
-                            error!("Got error: {:?}. Dropping subscriber.", e);
-                            subscribers2.borrow_mut().subscribers.remove(&idx);
-                        }
-                    }
-                    Ok::<(), Error>(())
-                }).map_err(|_| unreachable!()));
+                handle.spawn(
+                    request
+                        .send()
+                        .promise
+                        .then(move |r| {
+                            match r {
+                                Ok(_) => {
+                                    subscribers2
+                                        .borrow_mut()
+                                        .subscribers
+                                        .get_mut(&idx)
+                                        .map(|ref mut s| { s.requests_in_flight -= 1; });
+                                }
+                                Err(e) => {
+                                    error!("Got error: {:?}. Dropping subscriber.", e);
+                                    subscribers2.borrow_mut().subscribers.remove(&idx);
+                                }
+                            }
+                            Ok::<(), Error>(())
+                        })
+                        .map_err(|_| unreachable!()),
+                );
             }
         }
     }

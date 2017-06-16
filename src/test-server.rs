@@ -27,7 +27,9 @@ fn large() -> Response {
 
     Response::new()
         .with_header(ContentLength(body.len() as u64))
-        .with_header(ContentType(Mime(TopLevel::Application, SubLevel::Javascript, vec![])))
+        .with_header(ContentType(
+            Mime(TopLevel::Application, SubLevel::Javascript, vec![]),
+        ))
         .with_body(body)
 }
 
@@ -47,14 +49,9 @@ impl Service for TestServer {
                 Response::new()
                     .with_header(ContentLength(body.len() as u64))
                     .with_body(body)
-            },
-            (&Get, "/large") => {
-                large()
-            },
-            _ => {
-                Response::new()
-                    .with_status(StatusCode::NotFound)
             }
+            (&Get, "/large") => large(),
+            _ => Response::new().with_status(StatusCode::NotFound),
         })
     }
 }
@@ -64,7 +61,9 @@ fn main() {
 
     let port = env::args().nth(1).unwrap_or("12345".to_string());
 
-    let addr = format!("0.0.0.0:{}", port).parse::<SocketAddr>().expect("Failed to parse socket addr");
+    let addr = format!("0.0.0.0:{}", port)
+        .parse::<SocketAddr>()
+        .expect("Failed to parse socket addr");
     let server = Http::new().bind(&addr, || Ok(TestServer)).unwrap();
     server.run().unwrap();
 }
