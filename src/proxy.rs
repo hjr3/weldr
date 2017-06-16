@@ -26,7 +26,6 @@ header! { (ProxyAuthenticate, "Proxy-Authenticate") => [String] }
 header! { (Trailer, "Trailer") => [String] }
 
 impl Via {
-
     /// Append a Via header to existing Via header
     ///
     /// This is used when the upstream sends a Via header and we need to create a list of Via
@@ -40,7 +39,7 @@ impl Via {
 /// Create Via header for proxy to send downstream to origin server
 ///
 /// The Via header may already exist, so create a new header based off the upstream value
-pub fn create_via_header(via: Option<& Via>, version: &HttpVersion) -> Via {
+pub fn create_via_header(via: Option<&Via>, version: &HttpVersion) -> Via {
 
     let version = match version {
         &HttpVersion::Http09 => "0.9",
@@ -59,9 +58,7 @@ pub fn create_via_header(via: Option<& Via>, version: &HttpVersion) -> Via {
             v.append(value);
             v
         }
-        None => {
-            value
-        }
+        None => value,
     }
 }
 
@@ -108,9 +105,7 @@ pub fn filter_frontend_request_headers(headers: &Headers) -> Headers {
 /// The primary purpose of this function is to add and remove headers as required by an
 /// intermediary conforming to the HTTP spec.
 fn map_request(req: server::Request) -> client::Request {
-    let via = create_via_header(
-        req.headers().get::<Via>(),
-        &req.version());
+    let via = create_via_header(req.headers().get::<Via>(), &req.version());
 
     let mut headers = filter_frontend_request_headers(req.headers());
     headers.set(via);
@@ -156,7 +151,7 @@ impl Service for Proxy {
     type Request = server::Request;
     type Response = server::Response;
     type Error = hyper::Error;
-    type Future = Box<Future<Item=server::Response, Error=Self::Error>>;
+    type Future = Box<Future<Item = server::Response, Error = Self::Error>>;
 
     fn call(&self, req: server::Request) -> Self::Future {
 
@@ -164,10 +159,12 @@ impl Service for Proxy {
 
         self.pool.request(|server| {
 
-            let url = format!("{}{}?{}",
-                              server.url(),
-                              client_req.uri().path(),
-                              client_req.uri().query().unwrap_or(""));
+            let url = format!(
+                "{}{}?{}",
+                server.url(),
+                client_req.uri().path(),
+                client_req.uri().query().unwrap_or("")
+            );
             // TODO proper error handling
             let uri = Uri::from_str(&url).expect("Failed to parse url");
             let map_host = server.map_host();
@@ -182,20 +179,18 @@ impl Service for Proxy {
             }
             client_req.set_uri(uri);
 
-            let backend = self.client.call(client_req).then(move |res| {
-                match res {
-                    Ok(res) => {
-                        debug!("Response: {}", res.status());
-                        debug!("Headers: \n{}", res.headers());
+            let backend = self.client.call(client_req).then(move |res| match res {
+                Ok(res) => {
+                    debug!("Response: {}", res.status());
+                    debug!("Headers: \n{}", res.headers());
 
-                        let server_response = map_response(res);
+                    let server_response = map_response(res);
 
-                        ::futures::finished(server_response)
-                    }
-                    Err(e) => {
-                        error!("Error connecting to backend: {:?}", e);
-                        ::futures::failed(e)
-                    }
+                    ::futures::finished(server_response)
+                }
+                Err(e) => {
+                    error!("Error connecting to backend: {:?}", e);
+                    ::futures::failed(e)
                 }
             });
 
@@ -222,8 +217,14 @@ pub fn run(addr: SocketAddr, pool: Pool, core: Core) -> io::Result<()> {
 ///
 /// This is useful for integration testing where the port is set to 0 and the test code needs to
 /// determine the local addr.
-pub fn run_with<F>(mut core: Core, listener: TcpListener, pool: Pool, shutdown_signal: F) -> io::Result<()>
-    where F: Future<Item = (), Error = hyper::Error>,
+pub fn run_with<F>(
+    mut core: Core,
+    listener: TcpListener,
+    pool: Pool,
+    shutdown_signal: F,
+) -> io::Result<()>
+where
+    F: Future<Item = (), Error = hyper::Error>,
 {
     let handle = core.handle();
 

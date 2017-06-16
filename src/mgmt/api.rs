@@ -41,52 +41,67 @@ struct Index {
 fn index() -> Response {
     let index = Index {
         about: "Weldr Management API".to_string(),
-        links: vec![Link {
-            rel: "servers".to_string(),
-            href: "/servers".to_string(),
-            method: None,
-        }]
+        links: vec![
+            Link {
+                rel: "servers".to_string(),
+                href: "/servers".to_string(),
+                method: None,
+            },
+        ],
     };
 
     let body = serde_json::to_string_pretty(&index).expect("Failed to encode into json");
 
     Response::new()
         .with_header(ContentLength(body.len() as u64))
-        .with_header(ContentType(Mime(TopLevel::Application, SubLevel::Json,
-                                      vec![(Attr::Charset, Value::Utf8)])))
+        .with_header(ContentType(Mime(
+            TopLevel::Application,
+            SubLevel::Json,
+            vec![(Attr::Charset, Value::Utf8)],
+        )))
         .with_body(body)
 }
 
 fn all_servers_reponse(pool: &Pool) -> Response {
     let backends = pool.all();
     let all_servers: Vec<Server> = backends.iter().map(|backend| backend.server()).collect();
-    let servers: Vec<PoolServer> = all_servers.into_iter().map(|server| {
-        let delete_href = format!("/servers/{}", server.url());
-        PoolServer {
-            url: server.url().as_ref().to_string(),
-            links: Some(vec![Link {
-                rel: "delete".to_string(),
-                href: delete_href,
-                method: Some("DELETE".to_string()),
-            }]),
-        }
-    }).collect();
+    let servers: Vec<PoolServer> = all_servers
+        .into_iter()
+        .map(|server| {
+            let delete_href = format!("/servers/{}", server.url());
+            PoolServer {
+                url: server.url().as_ref().to_string(),
+                links: Some(vec![
+                    Link {
+                        rel: "delete".to_string(),
+                        href: delete_href,
+                        method: Some("DELETE".to_string()),
+                    },
+                ]),
+            }
+        })
+        .collect();
 
     let pool_servers = PoolServers {
         servers: servers,
-        links: Some(vec![Link {
-            rel: "add".to_string(),
-            href: "/servers".to_string(),
-            method: Some("POST".to_string()),
-        }]),
+        links: Some(vec![
+            Link {
+                rel: "add".to_string(),
+                href: "/servers".to_string(),
+                method: Some("POST".to_string()),
+            },
+        ]),
     };
 
     let body = serde_json::to_string_pretty(&pool_servers).expect("Failed to encode into json");
 
     Response::new()
         .with_header(ContentLength(body.len() as u64))
-        .with_header(ContentType(Mime(TopLevel::Application, SubLevel::Json,
-                                      vec![(Attr::Charset, Value::Utf8)])))
+        .with_header(ContentType(Mime(
+            TopLevel::Application,
+            SubLevel::Json,
+            vec![(Attr::Charset, Value::Utf8)],
+        )))
         .with_body(body)
 }
 
@@ -94,39 +109,53 @@ fn get_servers(pool: &Pool) -> Response {
     all_servers_reponse(pool)
 }
 
-fn add_server(request: Request, pool: Pool, manager: Manager, handle: Handle) -> Box<Future<Item = Response, Error = hyper::Error>> {
+fn add_server(
+    request: Request,
+    pool: Pool,
+    manager: Manager,
+    handle: Handle,
+) -> Box<Future<Item = Response, Error = hyper::Error>> {
 
-    let work = request.body().fold(Vec::new(), |mut v, chunk| {
-        v.extend(&chunk[..]);
-        future::ok::<_, hyper::Error>(v)
-    }).and_then(move |chunks| {
-        let body = String::from_utf8(chunks).unwrap();
+    let work = request
+        .body()
+        .fold(Vec::new(), |mut v, chunk| {
+            v.extend(&chunk[..]);
+            future::ok::<_, hyper::Error>(v)
+        })
+        .and_then(move |chunks| {
+            let body = String::from_utf8(chunks).unwrap();
 
-        let response = match serde_json::from_str::<PoolServer>(&body) {
-            Ok(server) => {
-                debug!("body = {:?}", server);
+            let response = match serde_json::from_str::<PoolServer>(&body) {
+                Ok(server) => {
+                    debug!("body = {:?}", server);
 
-                let backend = server.url.parse::<Uri>().expect("Failed to parse server url");
-                let backend = Server::new(backend, true);
-                pool.add(backend);
-                debug!("Added new server to pool");
+                    let backend = server
+                        .url
+                        .parse::<Uri>()
+                        .expect("Failed to parse server url");
+                    let backend = Server::new(backend, true);
+                    pool.add(backend);
+                    debug!("Added new server to pool");
 
-                let backend = server.url.parse::<Uri>().expect("Failed to parse server url");
-                manager.publish_new_server(backend, handle);
+                    let backend = server
+                        .url
+                        .parse::<Uri>()
+                        .expect("Failed to parse server url");
+                    manager.publish_new_server(backend, handle);
 
-                all_servers_reponse(&pool)
-            }
-            Err(e) => {
-                let body = format!("invalid JSON: {}", e);
-                Response::new()
-                    .with_status(StatusCode::BadRequest)
-                    .with_header(ContentLength(body.len() as u64))
-                    .with_body(body)
-            }
-        };
+                    all_servers_reponse(&pool)
+                }
+                Err(e) => {
+                    let body = format!("invalid JSON: {}", e);
+                    Response::new()
+                        .with_status(StatusCode::BadRequest)
+                        .with_header(ContentLength(body.len() as u64))
+                        .with_body(body)
+                }
+            };
 
-        ::futures::finished(response)
-    });
+            ::futures::finished(response)
+        });
 
     Box::new(work)
 }
@@ -171,25 +200,29 @@ impl Service for Mgmt {
 
     fn call(&self, req: Request) -> Self::Future {
         match (req.method(), req.path()) {
-            (&Get, "/") => {
-                Box::new(::futures::finished(index()))
-            },
-            (&Get, "/servers") => {
-                Box::new(::futures::finished(get_servers(&self.pool)))
-            },
+            (&Get, "/") => Box::new(::futures::finished(index())),
+            (&Get, "/servers") => Box::new(::futures::finished(get_servers(&self.pool))),
             (&Post, "/servers") => {
-                add_server(req, self.pool.clone(), self.manager.clone(), self.handle.clone())
-            },
+                add_server(
+                    req,
+                    self.pool.clone(),
+                    self.manager.clone(),
+                    self.handle.clone(),
+                )
+            }
             (&Delete, "/servers") => {
                 let body = "Remove server";
-                Box::new(::futures::finished(Response::new()
-                    .with_header(ContentLength(body.len() as u64))
-                    .with_body(body)))
-            },
+                Box::new(::futures::finished(
+                    Response::new()
+                        .with_header(ContentLength(body.len() as u64))
+                        .with_body(body),
+                ))
+            }
             _ => {
-                Box::new(::futures::finished(Response::new().with_status(StatusCode::NotFound)))
+                Box::new(::futures::finished(
+                    Response::new().with_status(StatusCode::NotFound),
+                ))
             }
         }
     }
 }
-

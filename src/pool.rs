@@ -24,25 +24,24 @@ impl Pool {
     /// Send a request to the pool
     ///
     /// The pool may be exhausted of eligible addresses to connect to and will return an error.
-    pub fn request<F>(&self, f: F) -> Box<Future<Item=server::Response, Error=hyper::Error>>
-        where F: FnOnce(&Server) -> Box<Future<Item=server::Response, Error=hyper::Error>>
+    pub fn request<F>(&self, f: F) -> Box<Future<Item = server::Response, Error = hyper::Error>>
+    where
+        F: FnOnce(&Server) -> Box<Future<Item = server::Response, Error = hyper::Error>>,
     {
         match self.inner.borrow_mut().get() {
             Some(backend) => {
-                Box::new(f(&backend.server()).then(move |res| {
-                    match res {
-                        Ok(res) => {
-                            if res.status().is_server_error() {
-                                backend.inc_failure();
-                            } else {
-                                backend.inc_success();
-                            }
-                            ::futures::finished(res)
-                        }
-                        Err(e) => {
+                Box::new(f(&backend.server()).then(move |res| match res {
+                    Ok(res) => {
+                        if res.status().is_server_error() {
                             backend.inc_failure();
-                            ::futures::failed(e)
+                        } else {
+                            backend.inc_success();
                         }
+                        ::futures::finished(res)
+                    }
+                    Err(e) => {
+                        backend.inc_failure();
+                        ::futures::failed(e)
                     }
                 }))
             }
@@ -112,7 +111,7 @@ impl Backend {
                 server: server,
                 state: ServerState::Active,
                 stats: Stats::new(),
-            }))
+            })),
         }
     }
 
@@ -152,7 +151,6 @@ pub struct InnerPool {
 }
 
 impl InnerPool {
-
     // this is only used in test code
     #[cfg(test)]
     fn new(backends: Vec<Backend>) -> InnerPool {
@@ -215,12 +213,8 @@ impl InnerPool {
 
     fn find(&self, server: &Server) -> Option<Backend> {
         match self.backends.iter().find(|b| &b.server() == server) {
-            Some(backend) => {
-                Some(backend.clone())
-            }
-            None => {
-                None
-            }
+            Some(backend) => Some(backend.clone()),
+            None => None,
         }
     }
 }
@@ -234,8 +228,14 @@ mod tests {
     #[test]
     fn test_rrb_backend() {
         let backends: Vec<Backend> = vec![
-            Backend::new(Server::new(FromStr::from_str("http://127.0.0.1:6000").unwrap(), false)),
-            Backend::new(Server::new(FromStr::from_str("http://127.0.0.1:6001").unwrap(), false)),
+            Backend::new(Server::new(
+                FromStr::from_str("http://127.0.0.1:6000").unwrap(),
+                false,
+            )),
+            Backend::new(Server::new(
+                FromStr::from_str("http://127.0.0.1:6001").unwrap(),
+                false,
+            )),
         ];
 
         let mut rrb = InnerPool::new(backends);
@@ -252,7 +252,7 @@ mod tests {
 
     #[test]
     fn test_empty_rrb_backend() {
-        let backends= vec![];
+        let backends = vec![];
         let mut rrb = InnerPool::new(backends);
         assert_eq!(0, rrb.backends.len());
         assert!(rrb.get().is_none());
@@ -283,7 +283,8 @@ mod tests {
         let b2 = Backend::new(server2.clone());
         assert_eq!(vec![b1.clone(), b2.clone()], rrb.all());
 
-        let unknown_server = Server::new(FromStr::from_str("http://127.0.0.1:1234").unwrap(), false);
+        let unknown_server =
+            Server::new(FromStr::from_str("http://127.0.0.1:1234").unwrap(), false);
         rrb.remove(&unknown_server);
         assert_eq!(2, rrb.backends.len());
         assert_eq!(vec![b1.clone(), b2.clone()], rrb.all());
