@@ -5,7 +5,7 @@ function main {
       mkdir -p opt;
       cp target/x86_64-unknown-linux-musl/release/weldr opt/;
       # Use the same docker image as much as possible
-      docker run --rm -it -v "$(pwd)":/home/rust/src ekidd/rust-musl-builder cargo build --release;
+      docker run -v $PWD:/volume -w /volume -t clux/muslrust /volume/build.sh;
       docker run -v $(pwd):/src/ cdrx/fpm-centos:7 -s dir -t deb -v $1 -n weldr -C /src  opt/weldr;
       docker run -v $(pwd):/src/ cdrx/fpm-centos:7 -s dir -t rpm -v $1 -n weldr -C /src  opt/weldr;
 
