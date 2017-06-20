@@ -15,7 +15,7 @@ cargo build --target x86_64-unknown-linux-musl --release
 
 ### Other (mac):
 ```
-docker run -v $PWD:/volume -w /volume -t clux/muslrust /volume/docker.sh
+docker run -v $PWD:/volume -w /volume -t clux/muslrust /volume/build.sh
 ```
 
 The executable can be found under: `./target/x86_64-unknown-linux-musl/release/weldr`
