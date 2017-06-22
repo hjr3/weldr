@@ -15,7 +15,7 @@ cargo build --target x86_64-unknown-linux-musl --release
 
 ### Other (mac):
 ```
-docker run -v $PWD:/volume -w /volume -t clux/muslrust cargo build --release
+docker run -v $PWD:/volume -w /volume -t clux/muslrust /volume/build.sh
 ```
 
 The executable can be found under: `./target/x86_64-unknown-linux-musl/release/weldr`
@@ -29,9 +29,9 @@ docker build -t weldr .
 ```
 docker run -p 8080:8080 -p 8687:8687 \
 -e "RUST_BACKTRACE=1" -e "RUST_LOG=weldr" \
---name weldr \
+--name weldr --rm \
 weldr \
-/weldr 0.0.0.0:8080 127.0.0.1:12345 0.0.0.0:8687
+/weldr --ip 0.0.0.0:8080 --admin-ip 0.0.0.0:8687
 ```
 Explanations:
 - `-p 8080:8080 -p 8687:8687`: bind the ports 8080 and 8687 to localhost
