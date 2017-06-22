@@ -12,7 +12,6 @@ use std::path::Path;
 use hyper::{Get, StatusCode};
 use hyper::server::{Http, Service, Request, Response};
 use hyper::header::{ContentLength, ContentType};
-use hyper::mime::{Mime, TopLevel, SubLevel};
 
 fn large() -> Response {
     let pwd = env!("CARGO_MANIFEST_DIR");
@@ -25,11 +24,11 @@ fn large() -> Response {
     let mut body = Vec::new();
     reader.read_to_end(&mut body).expect("Failed to read file");
 
+    // marked this as type plaintext as i do not want to import the entire mime crate for only this
+    // use case
     Response::new()
         .with_header(ContentLength(body.len() as u64))
-        .with_header(ContentType(
-            Mime(TopLevel::Application, SubLevel::Javascript, vec![]),
-        ))
+        .with_header(ContentType::plaintext())
         .with_body(body)
 }
 

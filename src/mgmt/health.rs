@@ -108,7 +108,7 @@ impl BackendHealth {
 
 pub fn run(pool: Pool, handle: &Handle, conf: &Config, manager: Manager, health: BackendHealth) {
     let client = Client::configure()
-        .connector(HttpsConnector::new(4, &handle))
+        .connector(HttpsConnector::new(4, &handle).unwrap())
         .build(&handle);
 
     let backends = pool.all();

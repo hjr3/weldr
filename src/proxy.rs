@@ -7,9 +7,8 @@ use net2::unix::UnixTcpBuilderExt;
 use futures::{future, Future, Stream};
 use tokio_core::reactor::{Core, Handle};
 use tokio_core::net::{TcpListener, TcpStream};
-use hyper::{self, Headers, Client, HttpVersion};
-use hyper::client;
-use hyper::client::Service;
+use hyper::{self, Headers, Body, Client, HttpVersion};
+use hyper::client::{self, HttpConnector, Service};
 use hyper::header;
 use hyper::server::{self, Http};
 use hyper_tls::HttpsConnector;
@@ -143,7 +142,7 @@ fn map_response(res: client::Response) -> server::Response {
 }
 
 struct Proxy {
-    client: Client<HttpsConnector>,
+    client: Client<HttpsConnector<HttpConnector>, Body>,
     pool: Pool,
 }
 
@@ -248,7 +247,7 @@ fn proxy(socket: TcpStream, addr: SocketAddr, pool: Pool, handle: &Handle) {
     // https://github.com/hyperium/hyper/issues/944
     socket.set_nodelay(true).unwrap();
     let client = Client::configure()
-        .connector(HttpsConnector::new(4, handle))
+        .connector(HttpsConnector::new(4, handle).unwrap())
         .build(&handle);
     let service = Proxy {
         client: client,

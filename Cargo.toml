@@ -9,11 +9,11 @@ build = "build.rs"
 log = "0.3"
 env_logger = "0.3.1"
 futures = "0.1.11"
-hyper = { git = "https://github.com/hyperium/hyper" }
-hyper-tls = { git = "https://github.com/hyperium/hyper-tls" }
+hyper = "0.11.0"
+hyper-tls = "0.1.1"
 tokio-core = "0.1"
 tokio-io = "0.1"
-tokio-service = { git = "https://github.com/tokio-rs/tokio-service" }
+tokio-service = "0.1.0"
 tokio-timer = "0.1.0"
 libc = "0.2.21"
 nix = "0.8.1"

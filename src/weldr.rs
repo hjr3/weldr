@@ -21,23 +21,31 @@ fn main() {
     env_logger::init().expect("Failed to start logger");
 
     let matches = App::new("weldr")
-         .arg(Arg::with_name("admin-ip")
-              .long("admin-ip")
-              .value_name("admin-ip")
-              .takes_value(true)
-              .help("admin ip and port used to issue commands to cluster. default: 0.0.0.0:8687"))
-         .arg(Arg::with_name("ip")
-              .long("ip")
-              .value_name("ip")
-              .takes_value(true)
-              .help("listening ip and port for cluster. default: 0.0.0.0:8080"))
-         .subcommand(SubCommand::with_name("worker")
-            .about("start a worker")
-            .arg(Arg::with_name("id")
-                 .long("id")
-                 .value_name("id")
-                 .takes_value(true)
-                 .help("worker id assigned by the manager")))
+        .arg(
+            Arg::with_name("admin-ip")
+                .long("admin-ip")
+                .value_name("admin-ip")
+                .takes_value(true)
+                .help(
+                    "admin ip and port used to issue commands to cluster. default: 0.0.0.0:8687",
+                ),
+        )
+        .arg(
+            Arg::with_name("ip")
+                .long("ip")
+                .value_name("ip")
+                .takes_value(true)
+                .help("listening ip and port for cluster. default: 0.0.0.0:8080"),
+        )
+        .subcommand(
+            SubCommand::with_name("worker").about("start a worker").arg(
+                Arg::with_name("id")
+                    .long("id")
+                    .value_name("id")
+                    .takes_value(true)
+                    .help("worker id assigned by the manager"),
+            ),
+        )
         .get_matches();
 
 

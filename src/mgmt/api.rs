@@ -7,7 +7,6 @@ use tokio_core::reactor::Handle;
 use hyper::{self, Delete, Get, Post, StatusCode, Uri};
 use hyper::server::{Service, Request, Response};
 use hyper::header::{ContentLength, ContentType};
-use hyper::mime::{Mime, TopLevel, SubLevel, Attr, Value};
 
 use server::Server;
 use pool::Pool;
@@ -54,11 +53,7 @@ fn index() -> Response {
 
     Response::new()
         .with_header(ContentLength(body.len() as u64))
-        .with_header(ContentType(Mime(
-            TopLevel::Application,
-            SubLevel::Json,
-            vec![(Attr::Charset, Value::Utf8)],
-        )))
+        .with_header(ContentType::json())
         .with_body(body)
 }
 
@@ -97,11 +92,7 @@ fn all_servers_reponse(pool: &Pool) -> Response {
 
     Response::new()
         .with_header(ContentLength(body.len() as u64))
-        .with_header(ContentType(Mime(
-            TopLevel::Application,
-            SubLevel::Json,
-            vec![(Attr::Charset, Value::Utf8)],
-        )))
+        .with_header(ContentType::json())
         .with_body(body)
 }
 
