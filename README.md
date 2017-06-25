@@ -4,13 +4,19 @@
 
 A HTTP 1.1 reverse proxy written in Rust using hyper (tokio version).
 
-## Design
+## Problem
+
+Popular proxies are configured using a static file and are not easily made highly available. It is now common to treat servers like cattle, use blue/green deployments and scale up/down based on traffic. Having the list of servers specified in the proxy configuration file makes the aforementioned ideas more difficult to implement. Creating active/passive proxy clusters requires the use of something like keepalived. There is a lot of unnecessary complexity setting up keepalived for each proxy instance. Worse still, it is significantly harder to automate this setup using something like puppet or chef.
+
+## Solution
 
 The goal is to build an _AWS ELB_-like reverse proxy that works well in the dynamic VM/container environments that are starting to be more common. Of particular focus is the ability to manage origins from the pool via some API.
 
-An eventual goal is to have the pool managed by Raft. This will allow a cluster of redundant weldr servers. This will allow an active/passive setup out of the box. Note: The [raft-rs](https://github.com/hoverbear/raft-rs) crate does not currently support dynamic membership.
+An eventual goal is to have the pool managed by Raft. This will allow a cluster of redundant weldr servers. This provides an active/passive setup out of the box. Note: The [raft-rs](https://github.com/hoverbear/raft-rs) crate does not currently support dynamic membership.
 
-## Requirements
+## Installation
+
+### Requirements
 
    * capnproto
    * A TLS library compatible with rust-tls
@@ -25,7 +31,7 @@ $ apt-get update && apt-get install gcc libssl-dev pkg-config capnproto
 
 See [DOCKER.md](./DOCKER.md) for details.
 
-## Running Protype
+## Usage
 
    * Start the proxy - `RUST_LOG=weldr cargo run --bin weldr`
    * Add a server to the pool - `curl localhost:8687/servers -d '{"url":"http://127.0.0.1:12345"}'`
@@ -33,7 +39,7 @@ See [DOCKER.md](./DOCKER.md) for details.
    * Send a request - `curl -vvv localhost:8080/`
    * Send a request and get back a large response - `curl -vvv localhost:8080/large`
 
-### Running Tests
+### Tests
 
    * `RUST_LOG=test_proxy,weldr cargo test` will execute the tests and provide log level output for both the proxy and the integration tests.
    * `rustup run nightly cargo bench` will execute some basic benchmarking.
