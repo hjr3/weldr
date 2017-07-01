@@ -16,26 +16,34 @@ An eventual goal is to have the pool managed by Raft. This will allow a cluster 
 
 ## Installation
 
-### Requirements
+The _production_ versions of weldr are deployed as static binaries. There are two general methods of installation:
+
+   * Packages for common operating systems are located at [https://packagecloud.io/weldr/weldr](https://packagecloud.io/weldr/weldr).
+   * A container repository is located at [https://hub.docker.com/r/weldr/weldr/](https://hub.docker.com/r/weldr/weldr/).
+
+### From Source
+
+#### Requirements
 
    * capnproto
    * A TLS library compatible with rust-tls
 
-### Installing on Ubuntu
+Installing requirements on Ubuntu:
 
 ```
 $ apt-get update && apt-get install gcc libssl-dev pkg-config capnproto
 ```
 
-### Docker
+#### Docker
 
 See [DOCKER.md](./DOCKER.md) for details.
 
 ## Usage
 
-   * Start the proxy - `RUST_LOG=weldr cargo run --bin weldr`
+   * Start the proxy - `RUST_LOG=weldr cargo run --bin weldr` or `RUST_LOG=weldr /path/to/weldr`
    * Add a server to the pool - `curl localhost:8687/servers -d '{"url":"http://127.0.0.1:12345"}'`
-   * Start test origin server - `cargo run --bin test-server` - start test origin server
+   * Start test origin server - `cargo run --bin test-server` - start test origin server. This is not provided by packages or the container.
+      * The test-server provides two routes: `/` and `/large`
    * Send a request - `curl -vvv localhost:8080/`
    * Send a request and get back a large response - `curl -vvv localhost:8080/large`
 
