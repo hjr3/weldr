@@ -147,14 +147,9 @@ fn client_send_request(
 
         let mut s_res = SimpleResponse::from_hyper_response(&res);
 
-        res.body()
-            .fold(Vec::new(), |mut v, chunk| {
-                v.extend(&chunk[..]);
-                future::ok::<_, hyper::Error>(v)
-            })
-            .and_then(move |chunks| {
-                let body = String::from_utf8(chunks).unwrap();
-                s_res.set_body(body);
+        res.body().concat2().and_then(move |chunk| {
+                let body = String::from_utf8_lossy(&chunk);
+                s_res.set_body(body.into_owned());
                 future::ok(s_res)
             })
     });
