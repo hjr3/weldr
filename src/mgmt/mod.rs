@@ -1,6 +1,5 @@
 use std::io;
 use std::net::SocketAddr;
-use std::time::Duration;
 
 use futures::Stream;
 use futures::stream::MergedItem;
@@ -26,14 +25,14 @@ pub fn run(
     pool: Pool,
     mut core: Core,
     manager: Manager,
-    conf: &Config,
+    config: &Config,
     health: BackendHealth,
 ) -> io::Result<()> {
     let handle = core.handle();
     let listener = TcpListener::bind(&sock, &handle)?;
     let timer = Timer::default();
     let health_timer = timer
-        .interval(Duration::from_secs(conf.health_check.interval))
+        .interval(config.health_check.interval)
         .map_err(|e| io::Error::new(io::ErrorKind::Other, e));
 
     let admin_addr = listener.local_addr()?;
@@ -47,12 +46,12 @@ pub fn run(
                 mgmt(socket, addr, pool.clone(), &handle, manager.clone());
             }
             MergedItem::Second(()) => {
-                health::run(pool.clone(), &handle, &conf, manager.clone(), health.clone());
+                health::run(pool.clone(), &handle, &config, manager.clone(), health.clone());
             }
             MergedItem::Both((socket, addr), ()) => {
                 mgmt(socket, addr, pool.clone(), &handle, manager.clone());
                 info!("health check");
-                health::run(pool.clone(), &handle, &conf, manager.clone(), health.clone());
+                health::run(pool.clone(), &handle, &config, manager.clone(), health.clone());
             }
         }
 

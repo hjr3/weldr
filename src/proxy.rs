@@ -2,10 +2,8 @@ use std::io;
 use std::net::SocketAddr;
 use std::str::{self, FromStr};
 
-use net2::TcpBuilder;
-use net2::unix::UnixTcpBuilderExt;
-use futures::{future, Future, Stream};
-use tokio_core::reactor::{Core, Handle};
+use futures::{Future, Stream};
+use tokio_core::reactor::Handle;
 use tokio_core::net::{TcpListener, TcpStream};
 use hyper::{self, Headers, Body, Client, HttpVersion};
 use hyper::client::{self, HttpConnector, Service};
@@ -13,8 +11,10 @@ use hyper::header;
 use hyper::server::{self, Http};
 use hyper_tls::HttpsConnector;
 use hyper::Uri;
+use hyper_timeout::TimeoutConnector;
 
 use pool::Pool;
+use config::Config;
 
 // testing here before sending PR upstream
 // TODO make this typed
@@ -142,7 +142,7 @@ fn map_response(res: client::Response) -> server::Response {
 }
 
 struct Proxy {
-    client: Client<HttpsConnector<HttpConnector>, Body>,
+    client: Client<TimeoutConnector<HttpsConnector<HttpConnector>>, Body>,
     pool: Pool,
 }
 
@@ -198,56 +198,33 @@ impl Service for Proxy {
     }
 }
 
-/// Run server with default Core
-pub fn run(addr: SocketAddr, pool: Pool, core: Core) -> io::Result<()> {
-    let handle = core.handle();
-
-    let listener = TcpBuilder::new_v4()?;
-    listener.reuse_address(true)?;
-    listener.reuse_port(true)?;
-    let listener = listener.bind(&addr)?;
-    let listener = listener.listen(128)?;
-    let listener = TcpListener::from_listener(listener, &addr, &handle)?;
-
-    run_with(core, listener, pool, future::empty())
-}
-
-/// Run server with specified Core, TcpListener, Pool
-///
-/// This is useful for integration testing where the port is set to 0 and the test code needs to
-/// determine the local addr.
-pub fn run_with<F>(
-    mut core: Core,
-    listener: TcpListener,
-    pool: Pool,
-    shutdown_signal: F,
-) -> io::Result<()>
-where
-    F: Future<Item = (), Error = hyper::Error>,
+pub fn serve(listener: TcpListener, pool: Pool, handle: &Handle, config: &Config) -> io::Result<Box<Future<Item = (), Error = io::Error>>>
 {
-    let handle = core.handle();
-
+    let handle = handle.clone();
+    let config = config.clone();
     let local_addr = listener.local_addr()?;
+    info!("Listening on http://{}", &local_addr);
     let srv = listener.incoming().for_each(move |(socket, addr)| {
-        proxy(socket, addr, pool.clone(), &handle);
+        proxy(socket, addr, pool.clone(), &handle, &config);
 
         Ok(())
     });
 
-    info!("Listening on http://{}", &local_addr);
-    match core.run(shutdown_signal.select(srv.map_err(|e| e.into()))) {
-        Ok(((), _incoming)) => Ok(()),
-        Err((e, _other)) => return Err(io::Error::new(io::ErrorKind::Other, e)),
-    }
+    return Ok(Box::new(srv));
 }
 
-fn proxy(socket: TcpStream, addr: SocketAddr, pool: Pool, handle: &Handle) {
+fn proxy(socket: TcpStream, addr: SocketAddr, pool: Pool, handle: &Handle, config: &Config) {
 
     // disable Nagle's algo
     // https://github.com/hyperium/hyper/issues/944
     socket.set_nodelay(true).unwrap();
+    let connector = HttpsConnector::new(4, handle).unwrap();
+    let mut tm = TimeoutConnector::new(connector, &handle);
+    tm.set_connect_timeout(config.timeout.connect);
+    tm.set_read_timeout(config.timeout.read);
+    tm.set_write_timeout(config.timeout.write);
     let client = Client::configure()
-        .connector(HttpsConnector::new(4, handle).unwrap())
+        .connector(tm)
         .build(&handle);
     let service = Proxy {
         client: client,

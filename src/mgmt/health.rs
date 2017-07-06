@@ -106,7 +106,7 @@ impl BackendHealth {
     }
 }
 
-pub fn run(pool: Pool, handle: &Handle, conf: &Config, manager: Manager, health: BackendHealth) {
+pub fn run(pool: Pool, handle: &Handle, config: &Config, manager: Manager, health: BackendHealth) {
     let client = Client::configure()
         .connector(HttpsConnector::new(4, &handle).unwrap())
         .build(&handle);
@@ -118,7 +118,7 @@ pub fn run(pool: Pool, handle: &Handle, conf: &Config, manager: Manager, health:
         let handle1 = handle1.clone();
         let server = backend.server();
         let health = health.clone();
-        let url = format!("{}{}", server.url(), &conf.health_check.uri_path);
+        let url = format!("{}{}", server.url(), &config.health_check.uri_path);
         let url = match Uri::from_str(&url) {
             Ok(url) => url,
             Err(e) => {
@@ -133,8 +133,8 @@ pub fn run(pool: Pool, handle: &Handle, conf: &Config, manager: Manager, health:
             }
         };
 
-        let allowed_failures = conf.health_check.failures;
-        let allowed_successes = conf.health_check.passes;
+        let allowed_failures = config.health_check.failures;
+        let allowed_successes = config.health_check.passes;
         debug!("Health check {:?}", url);
         let req = client.get(url).then(move |res| match res {
             Ok(res) => {
