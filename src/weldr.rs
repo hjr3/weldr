@@ -5,12 +5,17 @@ extern crate hyper;
 extern crate weldr;
 extern crate clap;
 extern crate tokio_core;
+extern crate net2;
 
+use std::io;
 use std::net::SocketAddr;
 
 use clap::{Arg, App, SubCommand};
+use net2::TcpBuilder;
+use net2::unix::UnixTcpBuilderExt;
 
-use tokio_core::reactor::Core;
+use tokio_core::reactor::{Core, Handle};
+use tokio_core::net::TcpListener;
 
 use weldr::pool::Pool;
 use weldr::config::Config;
@@ -49,7 +54,7 @@ fn main() {
         .get_matches();
 
 
-    let core = Core::new().unwrap();
+    let mut core = Core::new().unwrap();
     let handle = core.handle();
 
     // TODO make this dynamic and pass it down to workers
@@ -62,15 +67,18 @@ fn main() {
     let ip = ip.parse::<SocketAddr>().unwrap();
 
     let pool = Pool::default();
+    let config = Config::default();
 
     if let Some(matches) = matches.subcommand_matches("worker") {
         let id = matches.value_of("id").unwrap();
         debug!("Spawned worker {}", id);
         let _result = worker::subscribe(internal_addr, handle, pool.clone());
 
-        weldr::proxy::run(ip, pool, core).expect("Failed to start server");
+        let listener = setup_listener(ip, &core.handle()).expect("Failed to setup listener");
+        //weldr::proxy::run(ip, pool, core).expect("Failed to start server");
+        let srv = weldr::proxy::serve(listener, pool, &core.handle(), &config).expect("Failed to create server future");
+        core.run(srv).expect("Server failed");
     } else {
-        let conf = Config::default();
         let mut manager = manager::Manager::new();
         manager.listen(internal_addr, handle.clone());
         manager.start_workers(5).expect("Failed to start manager");
@@ -79,7 +87,18 @@ fn main() {
 
         let admin_ip = matches.value_of("worker").unwrap_or("0.0.0.0:8687");
         let admin_ip = admin_ip.parse::<SocketAddr>().unwrap();
-        weldr::mgmt::run(admin_ip, pool, core, manager.clone(), &conf, health.clone())
+        weldr::mgmt::run(admin_ip, pool, core, manager.clone(), &config, health.clone())
             .expect("Failed to start server");
     }
+}
+
+fn setup_listener(addr: SocketAddr, handle: &Handle) -> io::Result<TcpListener> {
+    let listener = TcpBuilder::new_v4()?;
+    listener.reuse_address(true)?;
+    listener.reuse_port(true)?;
+    let listener = listener.bind(&addr)?;
+    let listener = listener.listen(128)?;
+    let listener = TcpListener::from_listener(listener, &addr, &handle)?;
+
+    Ok(listener)
 }

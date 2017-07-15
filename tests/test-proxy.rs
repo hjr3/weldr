@@ -24,6 +24,7 @@ use hyper::header::{ContentLength, TransferEncoding};
 
 use weldr::server::Server;
 use weldr::pool::Pool;
+use weldr::config::Config;
 
 #[derive(Clone, Copy)]
 struct Origin;
@@ -100,7 +101,7 @@ where
     let pool = Pool::default();
 
     let addr = "127.0.0.1:0".parse::<SocketAddr>().unwrap();
-    let core = Core::new().unwrap();
+    let mut core = Core::new().unwrap();
     let handle = core.handle();
 
     let listener = TcpListener::bind(&addr, &handle).unwrap();
@@ -132,8 +133,12 @@ where
         )
     });
 
-    weldr::proxy::run_with(core, listener, pool.clone(), shutdown_signal)
-        .expect("Failed to start server");
+    let config = Config::default();
+    let srv = weldr::proxy::serve(listener, pool.clone(), &handle, &config).unwrap();
+    match core.run(shutdown_signal.select(srv.map_err(|e| e.into()))) {
+        Ok(((), _incoming)) => {},
+        Err((e, _other)) => panic!(e),
+    }
 }
 
 fn client_send_request(
