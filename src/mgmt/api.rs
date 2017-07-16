@@ -1,6 +1,6 @@
 use serde_json;
 
-use futures::{future, Future, Stream};
+use futures::{Future, Stream};
 
 use tokio_core::reactor::Handle;
 
@@ -108,15 +108,8 @@ fn add_server(
 ) -> Box<Future<Item = Response, Error = hyper::Error>> {
 
     let work = request
-        .body()
-        .fold(Vec::new(), |mut v, chunk| {
-            v.extend(&chunk[..]);
-            future::ok::<_, hyper::Error>(v)
-        })
-        .and_then(move |chunks| {
-            let body = String::from_utf8(chunks).unwrap();
-
-            let response = match serde_json::from_str::<PoolServer>(&body) {
+        .body().concat2().and_then(move |chunk| {
+            let response = match serde_json::from_slice::<PoolServer>(&chunk) {
                 Ok(server) => {
                     debug!("body = {:?}", server);
 
