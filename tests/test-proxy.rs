@@ -20,7 +20,7 @@ use tokio_io::io;
 use hyper::{Get, Post, StatusCode, Method, HttpVersion, Headers, Uri};
 use hyper::client;
 use hyper::server::{Http, Service, Request, Response};
-use hyper::header::{ContentLength, TransferEncoding};
+use hyper::header::{self, ContentLength, TransferEncoding};
 
 use weldr::server::Server;
 use weldr::pool::Pool;
@@ -37,32 +37,38 @@ impl Service for Origin {
 
     fn call(&self, req: Request) -> Self::Future {
         ::futures::finished(match (req.method(), req.path()) {
-            (&Get, "/") => {
-                let body = "Hello World";
-                Response::new()
-                    .with_header(ContentLength(body.len() as u64))
-                    .with_body(body)
+                                (&Get, "/") => {
+            let body = "Hello World";
+            Response::new()
+                .with_header(ContentLength(body.len() as u64))
+                .with_body(body)
+        }
+                                // RFC2616 9.4: server MUST NOT return a message-body in the response
+                                (_, "/method") if req.method() == &Method::Head ||
+                                                  req.method() == &Method::Connect => {
+            let server = format!("hello {}", req.method());
+            Response::new().with_header(header::Server::new(server))
+        }
+                                (_, "/method") => {
+            let body = format!("hello {}", req.method());
+            Response::new()
+                .with_header(ContentLength(body.len() as u64))
+                .with_body(body)
+        }
+                                (&Post, "/echo") => {
+            let mut res = Response::new();
+            if let Some(len) = req.headers().get::<ContentLength>() {
+                res.headers_mut().set(len.clone());
             }
-            (_, "/method") => {
-                let body = format!("hello {}", req.method());
-                Response::new()
-                    .with_header(ContentLength(body.len() as u64))
-                    .with_body(body)
-            }
-            (&Post, "/echo") => {
-                let mut res = Response::new();
-                if let Some(len) = req.headers().get::<ContentLength>() {
-                    res.headers_mut().set(len.clone());
-                }
-                res.with_body(req.body())
-            }
-            (_, "/chunked") => {
-                Response::new()
-                    .with_header(TransferEncoding::chunked())
-                    .with_body("Hello Chunky World!")
-            }
-            _ => Response::new().with_status(StatusCode::NotFound),
-        })
+            res.with_body(req.body())
+        }
+                                (_, "/chunked") => {
+                                    Response::new()
+                                        .with_header(TransferEncoding::chunked())
+                                        .with_body("Hello Chunky World!")
+                                }
+                                _ => Response::new().with_status(StatusCode::NotFound),
+                            })
     }
 }
 
@@ -93,8 +99,7 @@ impl SimpleResponse {
 /// The client request is to created via the callback. The callback provides the host so the client
 /// can connect to the correct proxy.
 fn with_server<R>(req: R)
-where
-    R: Fn(String, Handle) -> Box<Future<Item = (), Error = hyper::Error>>,
+    where R: Fn(String, Handle) -> Box<Future<Item = (), Error = hyper::Error>>
 {
     let _ = env_logger::init();
 
@@ -111,13 +116,13 @@ where
 
     let (tx, rx) = channel();
     let _h2 = thread::spawn(move || {
-        let addr = "127.0.0.1:0".parse::<SocketAddr>().unwrap();
+                                let addr = "127.0.0.1:0".parse::<SocketAddr>().unwrap();
 
 
-        let server = Http::new().bind(&addr, || Ok(Origin)).unwrap();
-        tx.send(server.local_addr().unwrap()).unwrap();
-        server.run().unwrap();
-    });
+                                let server = Http::new().bind(&addr, || Ok(Origin)).unwrap();
+                                tx.send(server.local_addr().unwrap()).unwrap();
+                                server.run().unwrap();
+                            });
 
     let origin = rx.recv().unwrap();
     let origin_str = format!("http://127.0.0.1:{}", origin.port());
@@ -125,39 +130,42 @@ where
     let origin_server = Server::new(origin_url, false);
     pool.add(origin_server);
 
-    let shutdown_signal = future::lazy(|| {
-        req(origin_str, handle.clone());
-        req(
-            format!("http://{}:{}", proxy_addr.ip(), proxy_addr.port()),
-            handle.clone(),
-        )
-    });
+    let shutdown_signal =
+        future::lazy(|| {
+                         req(origin_str, handle.clone());
+                         req(format!("http://{}:{}", proxy_addr.ip(), proxy_addr.port()),
+                             handle.clone())
+                     });
 
     let config = Config::default();
     let srv = weldr::proxy::serve(listener, pool.clone(), &handle, &config).unwrap();
     match core.run(shutdown_signal.select(srv.map_err(|e| e.into()))) {
-        Ok(((), _incoming)) => {},
+        Ok(((), _incoming)) => {}
         Err((e, _other)) => panic!(e),
     }
 }
 
-fn client_send_request(
-    request: client::Request,
-    handle: &Handle,
-) -> Box<Future<Item = SimpleResponse, Error = hyper::Error>> {
+fn client_send_request(request: client::Request,
+                       handle: &Handle)
+                       -> Box<Future<Item = SimpleResponse, Error = hyper::Error>> {
     let client = client::Client::new(&handle);
-    let res = client.request(request).and_then(move |res| {
-        debug!("Response: {}", res.status());
-        debug!("Headers: \n{}", res.headers());
+    let res = client
+        .request(request)
+        .and_then(move |res| {
+            debug!("Response: {}", res.status());
+            debug!("Headers: \n{}", res.headers());
 
-        let mut s_res = SimpleResponse::from_hyper_response(&res);
+            let mut s_res = SimpleResponse::from_hyper_response(&res);
 
-        res.body().concat2().and_then(move |chunk| {
-                let body = String::from_utf8_lossy(&chunk);
-                s_res.set_body(body.into_owned());
-                future::ok(s_res)
-            })
-    });
+            res.body()
+                .concat2()
+                .and_then(move |chunk| {
+                              let body = String::from_utf8_lossy(&chunk);
+                              debug!("Body: \n{:?}", &body);
+                              s_res.set_body(body.into_owned());
+                              future::ok(s_res)
+                          })
+        });
 
     Box::new(res)
 }
@@ -167,36 +175,31 @@ fn test_method_on_http_server() {
     let _ = env_logger::init();
     use std::str::FromStr;
 
-    let methods = vec![
-        "GET",
-        "DELETE",
-        "PATCH",
-        "OPTIONS",
-        "POST",
-        "PUT",
-        "TRACE",
-        "HEAD",
-        "CONNECT",
-    ];
+    let methods = vec!["GET", "DELETE", "PATCH", "OPTIONS", "POST", "PUT", "TRACE", "HEAD",
+                       "CONNECT"];
     for method in methods.iter() {
         with_server(|host, handle| {
 
             let method = method.clone();
             let h_method = Method::from_str(&method).unwrap();
             let url = hyper::Uri::from_str(&format!("{}{}", host, "/method")).unwrap();
-            let req = client::Request::new(h_method, url);
+            let req = client::Request::new(h_method.clone(), url);
+
             let work = client_send_request(req, &handle).and_then(move |res| {
 
                 assert_eq!(res.status, hyper::StatusCode::Ok);
 
-                // TODO: fix body being returned here
-                // HEAD, CONNECT cannot return any body
-                //if method != "HEAD" && method != "CONNECT" {
                 let expected = format!("hello {}", method);
-                assert_eq!(expected, res.body.unwrap());
-                //} else {
-                //    assert_eq!("", &s);
-                //}
+                let expected_resp = match h_method {
+                    Method::Head | Method::Connect => {
+                        res.headers
+                            .get::<header::Server>()
+                            .unwrap()
+                            .to_string()
+                    }
+                    _ => res.body.unwrap(),
+                };
+                assert_eq!(expected, expected_resp);
 
                 future::ok(())
             });
@@ -236,9 +239,8 @@ fn test_request_and_response_body_chunked() {
         let tcp = TcpStream::connect(&addr, &handle);
         let req = tcp.and_then(|stream| {
 
-            io::write_all(
-                stream,
-                &b"\
+                io::write_all(stream,
+                              &b"\
             POST /echo HTTP/1.1\r\n\
             Host: www.example.com\r\n\
             Accept: */*\r\n\
@@ -249,16 +251,17 @@ fn test_request_and_response_body_chunked() {
             hello\r\n\
             0\r\n\r\n\
             "
-                    [..],
-            ).and_then(|(stream, _)| io::read_to_end(stream, Vec::new()))
-                .and_then(|(_, body)| {
-                    let body = String::from_utf8(body).unwrap();
-                    let n = body.find("\r\n\r\n").unwrap() + 4;
-                    assert_eq!(&body[n..], "5\r\nhello\r\n0\r\n\r\n");
+                                   [..])
+                        .and_then(|(stream, _)| io::read_to_end(stream, Vec::new()))
+                        .and_then(|(_, body)| {
+                                      let body = String::from_utf8(body).unwrap();
+                                      let n = body.find("\r\n\r\n").unwrap() + 4;
+                                      assert_eq!(&body[n..], "5\r\nhello\r\n0\r\n\r\n");
 
-                    future::ok(())
-                })
-        }).map_err(From::from);
+                                      future::ok(())
+                                  })
+            })
+            .map_err(From::from);
 
         Box::new(req)
     })
