@@ -21,8 +21,8 @@ services:
 install:
   # travis run Ubuntu 14, which has an old version of capnproto
   - ./travis_scripts/install-capnp.sh
-  - gem install fpm --no-rdoc --no-ri
-  - gem install package_cloud --no-ri --no-rdoc
+  - gem install fpm --no-document
+  - gem install package_cloud --no-document
   - export PKG_CONFIG_PATH=$HOME/capnp:$PKG_CONFIG_PATH
   - export LD_LIBRARY_PATH=$HOME/capnp:$LD_LIBRARY_PATH
   - export PATH=$HOME/capnp/bin:$PATH
