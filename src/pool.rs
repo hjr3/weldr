@@ -142,6 +142,8 @@ impl Backend {
     pub fn mark_down(&self) {
         self.inner.borrow_mut().state = ServerState::Down;
     }
+
+    pub fn server_stats(&self) -> Stats { self.inner.borrow_mut().stats.clone()}
 }
 
 #[derive(Debug, Default)]
@@ -296,5 +298,32 @@ mod tests {
         rrb.remove(&server2);
         assert_eq!(0, rrb.backends.len());
         assert!(rrb.all().is_empty());
+    }
+
+    #[test]
+    fn test_stats_from_rrb_backend() {
+        let backend1 =
+            Backend::new(Server::new(
+                FromStr::from_str("http://127.0.0.1:6000").unwrap(),
+                false,
+        ));
+        let backend2 =
+            Backend::new(Server::new(
+                FromStr::from_str("http://127.0.0.1:6001").unwrap(),
+                false,
+        ));
+
+        backend1.inc_success();
+        backend1.inc_success();
+
+        backend2.inc_failure();
+        backend2.inc_failure();
+
+        assert_eq!(2, backend1.server_stats().success());
+        assert_eq!(0, backend1.server_stats().failure());
+
+        assert_eq!(2, backend2.server_stats().failure());
+        assert_eq!(0, backend2.server_stats().success());
+
     }
 }

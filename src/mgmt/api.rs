@@ -31,6 +31,19 @@ struct PoolServer {
     pub url: String,
     pub links: Option<Vec<Link>>,
 }
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ServerStats {
+    pub url: String,
+    pub success: usize,
+    pub failure: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ServersStats {
+    pub servers: Vec<ServerStats>,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct Index {
     pub about: String,
@@ -98,6 +111,33 @@ fn all_servers_reponse(pool: &Pool) -> Response {
 
 fn get_servers(pool: &Pool) -> Response {
     all_servers_reponse(pool)
+}
+
+fn get_stats(pool: &Pool) -> Response {
+    let backends = pool.all();
+    let server_stats: Vec<ServerStats> = backends
+        .iter()
+        .map(|backend| {
+            ServerStats {
+                url: backend.server().url().to_string(),
+                success: backend.server_stats().success(),
+                failure: backend.server_stats().failure(),
+            }
+        })
+        .collect();
+
+    let servers_stats = ServersStats {
+        servers: server_stats,
+    };
+
+    let body = serde_json::to_string_pretty(&servers_stats).expect("Failed to encode into json");
+
+    Response::new()
+        .with_header(ContentLength(body.len() as u64))
+        .with_header(ContentType::json())
+        .with_body(body)
+
+
 }
 
 fn add_server(
@@ -201,6 +241,9 @@ impl Service for Mgmt {
                         .with_header(ContentLength(body.len() as u64))
                         .with_body(body),
                 ))
+            }
+            (&Get, "/stats") => {
+                Box::new(::futures::finished(get_stats(&self.pool)))
             }
             _ => {
                 Box::new(::futures::finished(
